@@ -39,6 +39,10 @@ log/
 cache/
 tmp/
 
+# Node.js
+node_modules/
+package-lock.json
+
 # OS
 .DS_Store
 Thumbs.db

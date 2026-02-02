@@ -61,6 +61,9 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("Database", "cache.db")
 	v.SetDefault("LogLevel", "info")
 	v.SetDefault("DefaultQuality", "hires")
+	v.SetDefault("EnableMultipartDownload", true)
+	v.SetDefault("MultipartConcurrency", 4)
+	v.SetDefault("MultipartMinSizeMB", 5)
 }
 
 // GetString returns a string value.

@@ -18,20 +18,20 @@ import (
 	"github.com/liuran001/MusicBot-Go/bot/telegram/handler"
 	"github.com/liuran001/MusicBot-Go/bot/worker"
 	"github.com/liuran001/MusicBot-Go/plugins/netease"
-	neteasePlatform "github.com/liuran001/MusicBot-Go/plugins/netease"
 	gormlogger "gorm.io/gorm/logger"
 )
 
 // App wires all application dependencies.
 type App struct {
-	Config          *config.Config
-	Logger          *logpkg.Logger
-	DB              *db.Repository
-	Pool            *worker.Pool
-	Netease         *netease.Client
-	PlatformManager platform.Manager
-	Telegram        *telegram.Bot
-	Build           BuildInfo
+	Config           *config.Config
+	Logger           *logpkg.Logger
+	DB               *db.Repository
+	Pool             *worker.Pool
+	Netease          *netease.Client
+	PlatformManager  platform.Manager
+	Telegram         *telegram.Bot
+	RecognizeService *netease.RecognizeService
+	Build            BuildInfo
 }
 
 // BuildInfo provides build-time metadata.
@@ -76,7 +76,7 @@ func New(ctx context.Context, configPath string, build BuildInfo) (*App, error) 
 	neteaseClient := netease.New(musicU, log)
 
 	platformManager := platform.NewManager()
-	neteasePlatformInstance := neteasePlatform.NewPlatform(neteaseClient)
+	neteasePlatformInstance := netease.NewPlatform(neteaseClient)
 	platformManager.Register(neteasePlatformInstance)
 
 	tele, err := telegram.New(conf, log)
@@ -84,20 +84,37 @@ func New(ctx context.Context, configPath string, build BuildInfo) (*App, error) 
 		return nil, fmt.Errorf("init telegram: %w", err)
 	}
 
+	recognizeService := netease.NewRecognizeService(3737)
+
 	return &App{
-		Config:          conf,
-		Logger:          log,
-		DB:              repo,
-		Pool:            pool,
-		Netease:         neteaseClient,
-		PlatformManager: platformManager,
-		Telegram:        tele,
-		Build:           build,
+		Config:           conf,
+		Logger:           log,
+		DB:               repo,
+		Pool:             pool,
+		Netease:          neteaseClient,
+		PlatformManager:  platformManager,
+		Telegram:         tele,
+		RecognizeService: recognizeService,
+		Build:            build,
 	}, nil
 }
 
 // Start initializes background services. Telegram startup is added in later waves.
 func (a *App) Start(ctx context.Context) error {
+	// Start recognition service first
+	if a.RecognizeService != nil {
+		if err := a.RecognizeService.Start(ctx); err != nil {
+			if a.Logger != nil {
+				a.Logger.Warn("failed to start recognition service", "error", err)
+			}
+			// Don't fail app startup if recognition service fails
+		} else {
+			if a.Logger != nil {
+				a.Logger.Info("audio recognition service started successfully")
+			}
+		}
+	}
+
 	meCtx, cancel := context.WithTimeout(ctx, 15*time.Second)
 	defer cancel()
 	me, err := a.Telegram.GetMe(meCtx)
@@ -112,9 +129,12 @@ func (a *App) Start(ctx context.Context) error {
 	}
 
 	downloadService := download.NewDownloadService(download.DownloadServiceOptions{
-		Timeout:      time.Duration(a.Config.GetInt("DownloadTimeout")) * time.Second,
-		ReverseProxy: a.Config.GetString("ReverseProxy"),
-		CheckMD5:     a.Config.GetBool("CheckMD5"),
+		Timeout:              time.Duration(a.Config.GetInt("DownloadTimeout")) * time.Second,
+		ReverseProxy:         a.Config.GetString("ReverseProxy"),
+		CheckMD5:             a.Config.GetBool("CheckMD5"),
+		EnableMultipart:      a.Config.GetBool("EnableMultipartDownload"),
+		MultipartConcurrency: a.Config.GetInt("MultipartConcurrency"),
+		MultipartMinSize:     int64(a.Config.GetInt("MultipartMinSizeMB")) * 1024 * 1024,
 	})
 	id3Service := id3.NewID3Service(a.Logger)
 
@@ -153,7 +173,7 @@ func (a *App) Start(ctx context.Context) error {
 		Music:            musicHandler,
 		Search:           &handler.SearchHandler{PlatformManager: a.PlatformManager, Repo: a.DB, RateLimiter: rateLimiter},
 		Lyric:            &handler.LyricHandler{PlatformManager: a.PlatformManager, RateLimiter: rateLimiter},
-		Recognize:        &handler.RecognizeHandler{CacheDir: "./cache", Music: musicHandler, RateLimiter: rateLimiter},
+		Recognize:        &handler.RecognizeHandler{CacheDir: "./cache", Music: musicHandler, RateLimiter: rateLimiter, RecognizeService: a.RecognizeService, Logger: a.Logger},
 		About:            &handler.AboutHandler{RuntimeVer: a.Build.RuntimeVer, BinVersion: a.Build.BinVersion, CommitSHA: a.Build.CommitSHA, BuildTime: a.Build.BuildTime, BuildArch: a.Build.BuildArch, RateLimiter: rateLimiter},
 		Status:           &handler.StatusHandler{Repo: a.DB, PlatformManager: a.PlatformManager, RateLimiter: rateLimiter},
 		Settings:         settingsHandler,
@@ -171,6 +191,7 @@ func (a *App) Start(ctx context.Context) error {
 		{Command: "search", Description: "搜索音乐"},
 		{Command: "settings", Description: "设置默认平台和音质"},
 		{Command: "lyric", Description: "获取歌词"},
+		{Command: "recognize", Description: "识别语音中的歌曲"},
 		{Command: "status", Description: "查看统计信息"},
 		{Command: "about", Description: "关于本 Bot"},
 	}
@@ -185,6 +206,17 @@ func (a *App) Start(ctx context.Context) error {
 // Shutdown releases resources.
 func (a *App) Shutdown(ctx context.Context) error {
 	var firstErr error
+
+	if a.RecognizeService != nil {
+		if err := a.RecognizeService.Stop(); err != nil {
+			if a.Logger != nil {
+				a.Logger.Error("failed to stop recognition service", "error", err)
+			}
+			if firstErr == nil {
+				firstErr = fmt.Errorf("stop recognition service: %w", err)
+			}
+		}
+	}
 
 	if a.Pool != nil {
 		if err := a.Pool.Shutdown(ctx); err != nil {

@@ -414,19 +414,33 @@ func (h *MusicHandler) downloadAndPrepareFromPlatform(ctx context.Context, plat 
 	}
 	if coverURL != "" {
 		picPath = filepath.Join(h.CacheDir, fmt.Sprintf("%d-%s", stamp, path.Base(coverURL)))
-		if _, err := h.DownloadService.Download(ctx, &platform.DownloadInfo{URL: coverURL, Size: 2 * 1024 * 1024}, picPath, nil); err == nil {
+		if _, err := h.DownloadService.Download(ctx, &platform.DownloadInfo{URL: coverURL, Size: 0}, picPath, nil); err == nil {
 			if stat, statErr := os.Stat(picPath); statErr == nil && stat.Size() > 0 {
 				songInfo.PicSize = int(stat.Size())
 				cleanupList = append(cleanupList, picPath)
 				if resized, err := resizeImg(picPath); err == nil {
 					resizePicPath = resized
 					cleanupList = append(cleanupList, resizePicPath)
+				} else {
+					if h.Logger != nil {
+						h.Logger.Warn("failed to resize cover image", "track", trackID, "error", err)
+					}
 				}
 			} else {
+				if h.Logger != nil {
+					if statErr != nil {
+						h.Logger.Warn("failed to stat cover file", "track", trackID, "error", statErr)
+					} else {
+						h.Logger.Warn("cover file is empty", "track", trackID)
+					}
+				}
 				_ = os.Remove(picPath)
 				picPath = ""
 			}
 		} else {
+			if h.Logger != nil {
+				h.Logger.Warn("failed to download cover", "track", trackID, "url", coverURL, "error", err)
+			}
 			picPath = ""
 		}
 	}

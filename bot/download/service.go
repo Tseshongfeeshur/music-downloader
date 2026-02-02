@@ -20,16 +20,22 @@ import (
 type ProgressFunc = util.ProgressFunc
 
 type DownloadService struct {
-	client       *http.Client
-	timeout      time.Duration
-	reverseProxy string
-	checkMD5     bool
+	client              *http.Client
+	timeout             time.Duration
+	reverseProxy        string
+	checkMD5            bool
+	multipartEnabled    bool
+	multipartOpts       MultipartDownloadOptions
+	multipartDownloader *MultipartDownloader
 }
 
 type DownloadServiceOptions struct {
-	Timeout      time.Duration
-	ReverseProxy string
-	CheckMD5     bool
+	Timeout              time.Duration
+	ReverseProxy         string
+	CheckMD5             bool
+	EnableMultipart      bool
+	MultipartConcurrency int
+	MultipartMinSize     int64
 }
 
 func NewDownloadService(opts DownloadServiceOptions) *DownloadService {
@@ -46,14 +52,27 @@ func NewDownloadService(opts DownloadServiceOptions) *DownloadService {
 		ExpectContinueTimeout: 1 * time.Second,
 	}
 
-	return &DownloadService{
-		client: &http.Client{
-			Transport: transport,
-		},
-		timeout:      opts.Timeout,
-		reverseProxy: strings.TrimSpace(opts.ReverseProxy),
-		checkMD5:     opts.CheckMD5,
+	client := &http.Client{
+		Transport: transport,
 	}
+
+	s := &DownloadService{
+		client:           client,
+		timeout:          opts.Timeout,
+		reverseProxy:     strings.TrimSpace(opts.ReverseProxy),
+		checkMD5:         opts.CheckMD5,
+		multipartEnabled: opts.EnableMultipart,
+	}
+
+	if opts.EnableMultipart {
+		s.multipartOpts = MultipartDownloadOptions{
+			Concurrency: opts.MultipartConcurrency,
+			MinSize:     opts.MultipartMinSize,
+		}
+		s.multipartDownloader = NewMultipartDownloader(client, opts.Timeout, s.multipartOpts)
+	}
+
+	return s
 }
 
 func (s *DownloadService) Download(ctx context.Context, info *platform.DownloadInfo, destPath string, progress ProgressFunc) (int64, error) {
@@ -70,6 +89,22 @@ func (s *DownloadService) Download(ctx context.Context, info *platform.DownloadI
 
 	baseURL := rewriteNeteaseHost(info.URL)
 	originalHost := hostFromURL(baseURL)
+
+	if s.multipartEnabled && s.multipartDownloader != nil {
+		written, err := s.tryMultipartDownload(ctx, baseURL, info, destPath, progress)
+		if err == nil {
+			if s.checkMD5 && info.MD5 != "" {
+				if ok, err := util.VerifyMD5(destPath, info.MD5); err != nil || !ok {
+					_ = os.Remove(destPath)
+					if err != nil {
+						return 0, err
+					}
+					return 0, errors.New("md5 verification failed")
+				}
+			}
+			return written, nil
+		}
+	}
 
 	var lastErr error
 	for attempt := 0; attempt < 3; attempt++ {
@@ -98,6 +133,19 @@ func (s *DownloadService) Download(ctx context.Context, info *platform.DownloadI
 		}
 	}
 	return 0, lastErr
+}
+
+func (s *DownloadService) tryMultipartDownload(ctx context.Context, baseURL string, info *platform.DownloadInfo, destPath string, progress ProgressFunc) (int64, error) {
+	written, err := s.multipartDownloader.Download(ctx, baseURL, info, destPath, progress)
+	if err != nil {
+		_ = os.Remove(destPath)
+		return 0, fmt.Errorf("multipart download failed (will retry with single-thread): %w", err)
+	}
+	if info.Size > 0 && written != info.Size {
+		_ = os.Remove(destPath)
+		return 0, fmt.Errorf("incomplete multipart download: got %d bytes, expected %d", written, info.Size)
+	}
+	return written, nil
 }
 
 func (s *DownloadService) downloadOnce(ctx context.Context, rawURL, originalHost string, info *platform.DownloadInfo, destPath string, progress ProgressFunc, useProxy bool) (int64, error) {
