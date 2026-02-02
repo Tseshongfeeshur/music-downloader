@@ -66,6 +66,12 @@ func New(ctx context.Context, configPath string, build BuildInfo) (*App, error) 
 	if err != nil {
 		return nil, fmt.Errorf("init db: %w", err)
 	}
+	poolMaxOpen := conf.GetInt("DBMaxOpenConns")
+	poolMaxIdle := conf.GetInt("DBMaxIdleConns")
+	poolMaxLifetimeSec := conf.GetInt("DBConnMaxLifetimeSec")
+	if err := repo.ConfigurePool(poolMaxOpen, poolMaxIdle, time.Duration(poolMaxLifetimeSec)*time.Second); err != nil {
+		return nil, fmt.Errorf("configure db pool: %w", err)
+	}
 	repo.SetDefaults("netease", conf.GetString("DefaultQuality"))
 
 	poolSize := conf.GetInt("WorkerPoolSize")

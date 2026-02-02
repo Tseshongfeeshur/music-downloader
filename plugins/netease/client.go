@@ -68,7 +68,7 @@ func New(musicU string, logger bot.Logger) *Client {
 // GetSongDetail retrieves song detail data.
 func (c *Client) GetSongDetail(ctx context.Context, musicID int) (*bot.SongDetail, error) {
 	if c.logger != nil {
-		c.logger.Info("fetching song detail", "music_id", musicID)
+		c.logger.Debug("fetching song detail", "music_id", musicID)
 	}
 
 	var result bot.SongDetail
@@ -82,7 +82,7 @@ func (c *Client) GetSongDetail(ctx context.Context, musicID int) (*bot.SongDetai
 		}
 		result = data
 		if c.logger != nil {
-			c.logger.Info("song detail fetched successfully", "music_id", musicID, "songs_count", len(result.Songs))
+			c.logger.Debug("song detail fetched successfully", "music_id", musicID, "songs_count", len(result.Songs))
 		}
 		return nil
 	})
