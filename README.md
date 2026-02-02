@@ -71,8 +71,6 @@ go build -o MusicBot-Go
 - `https://music.163.com/#/song?id=12345`
 - `https://y.music.163.com/m/song?id=12345` (移动端)
 
-**未来支持**: Spotify, YouTube Music, QQ Music 等
-
 ### 使用示例
 
 1. **URL 下载**: 直接发送音乐链接到 Bot

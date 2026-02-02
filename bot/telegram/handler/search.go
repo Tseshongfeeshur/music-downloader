@@ -4,7 +4,10 @@ import (
 	"context"
 	"errors"
 	"fmt"
+	"strconv"
 	"strings"
+	"sync"
+	"time"
 
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
@@ -20,6 +23,24 @@ type SearchHandler struct {
 	RateLimiter      *telegram.RateLimiter
 	DefaultPlatform  string
 	FallbackPlatform string
+	searchMu         sync.Mutex
+	searchCache      map[int]*searchState
+}
+
+const (
+	searchPageSize     = 8
+	searchCacheTTL     = 10 * time.Minute
+	defaultSearchLimit = 10
+	neteaseSearchLimit = 48
+)
+
+type searchState struct {
+	keyword     string
+	platform    string
+	quality     string
+	requesterID int64
+	limit       int
+	updatedAt   time.Time
 }
 
 func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -132,17 +153,20 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 		return
 	}
 
-	tracks, err := plat.Search(ctx, keyword, 10)
+	searchLimit := h.searchLimit(platformName)
+	tracks, err := plat.Search(ctx, keyword, searchLimit)
 	usedFallback := false
 	if err != nil {
 		if fallbackPlatform != "" && platformName != fallbackPlatform {
 			fallbackPlat := h.PlatformManager.Get(fallbackPlatform)
 			if fallbackPlat != nil && fallbackPlat.SupportsSearch() {
-				tracks, err = fallbackPlat.Search(ctx, keyword, 10)
+				fallbackLimit := h.searchLimit(fallbackPlatform)
+				tracks, err = fallbackPlat.Search(ctx, keyword, fallbackLimit)
 				if err == nil && len(tracks) > 0 {
 					platformName = fallbackPlatform
 					plat = fallbackPlat
 					usedFallback = true
+					searchLimit = fallbackLimit
 				}
 			}
 		}
@@ -184,7 +208,6 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 		return
 	}
 
-	var buttons []models.InlineKeyboardButton
 	var textMessage strings.Builder
 
 	platformEmoji := platformEmoji(platformName)
@@ -201,53 +224,9 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 		requesterID = message.From.ID
 	}
 
-	maxResults := len(tracks)
-	if maxResults > 8 {
-		maxResults = 8
-	}
-
-	for i := 0; i < maxResults; i++ {
-		track := tracks[i]
-		escapedTitle := mdV2Replacer.Replace(track.Title)
-
-		trackLink := escapedTitle
-		if strings.TrimSpace(track.URL) != "" {
-			trackLink = fmt.Sprintf("[%s](%s)", escapedTitle, track.URL)
-		}
-
-		var artistParts []string
-		for _, artist := range track.Artists {
-			escapedArtist := mdV2Replacer.Replace(artist.Name)
-			if strings.TrimSpace(artist.URL) != "" {
-				artistParts = append(artistParts, fmt.Sprintf("[%s](%s)", escapedArtist, artist.URL))
-			} else {
-				artistParts = append(artistParts, escapedArtist)
-			}
-		}
-		songArtists := strings.Join(artistParts, " / ")
-
-		textMessage.WriteString(fmt.Sprintf("%d\\. 「%s」 \\- %s\n", i+1, trackLink, songArtists))
-
-		qualityValue := "hires"
-		if h.Repo != nil {
-			if message.Chat.Type != "private" {
-				if settings, err := h.Repo.GetGroupSettings(ctx, message.Chat.ID); err == nil && settings != nil {
-					qualityValue = settings.DefaultQuality
-				}
-			} else if userID != 0 {
-				if settings, err := h.Repo.GetUserSettings(ctx, userID); err == nil && settings != nil {
-					qualityValue = settings.DefaultQuality
-				}
-			}
-		}
-		callbackData := fmt.Sprintf("music %s %s %s %d", platformName, track.ID, qualityValue, requesterID)
-		buttons = append(buttons, models.InlineKeyboardButton{
-			Text:         fmt.Sprintf("%d", i+1),
-			CallbackData: callbackData,
-		})
-	}
-
-	keyboard := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{buttons}}
+	qualityValue := h.resolveDefaultQuality(ctx, message, userID)
+	pageText, keyboard := h.buildSearchPage(tracks, platformName, keyword, qualityValue, requesterID, msgResult.ID, 1)
+	textMessage.WriteString(pageText)
 	disablePreview := true
 	params := &bot.EditMessageTextParams{
 		ChatID:             msgResult.Chat.ID,
@@ -261,5 +240,282 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 		_, _ = telegram.EditMessageTextWithRetry(ctx, h.RateLimiter, b, params)
 	} else {
 		_, _ = b.EditMessageText(ctx, params)
+	}
+	h.storeSearchState(msgResult.ID, &searchState{
+		keyword:     keyword,
+		platform:    platformName,
+		quality:     qualityValue,
+		requesterID: requesterID,
+		limit:       searchLimit,
+		updatedAt:   time.Now(),
+	})
+}
+
+type SearchCallbackHandler struct {
+	Search      *SearchHandler
+	RateLimiter *telegram.RateLimiter
+}
+
+func (h *SearchCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
+	if update == nil || update.CallbackQuery == nil || h.Search == nil {
+		return
+	}
+	query := update.CallbackQuery
+	parts := strings.Fields(query.Data)
+	if len(parts) < 4 || parts[0] != "search" {
+		return
+	}
+	messageID, err := strconv.Atoi(parts[1])
+	if err != nil {
+		return
+	}
+	action := parts[2]
+	page := 0
+	if action == "page" {
+		page, err = strconv.Atoi(parts[3])
+		if err != nil {
+			return
+		}
+	}
+	requesterIDIndex := 3
+	if action == "page" {
+		requesterIDIndex = 4
+	}
+	if len(parts) <= requesterIDIndex {
+		return
+	}
+	requesterID, _ := strconv.ParseInt(parts[requesterIDIndex], 10, 64)
+	if query.Message.Message == nil {
+		return
+	}
+	msg := query.Message.Message
+	if msg.Chat.Type != "private" {
+		if !isRequesterOrAdmin(ctx, b, msg.Chat.ID, query.From.ID, requesterID) {
+			_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+				CallbackQueryID: query.ID,
+				Text:            callbackDenied,
+				ShowAlert:       true,
+			})
+			return
+		}
+	}
+	state, ok := h.Search.getSearchState(messageID)
+	if !ok {
+		_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			CallbackQueryID: query.ID,
+			Text:            "搜索结果已过期，请重新搜索",
+		})
+		return
+	}
+	if action == "close" {
+		deleteParams := &bot.DeleteMessageParams{ChatID: msg.Chat.ID, MessageID: msg.ID}
+		if h.RateLimiter != nil {
+			_ = telegram.DeleteMessageWithRetry(ctx, h.RateLimiter, b, deleteParams)
+		} else {
+			_, _ = b.DeleteMessage(ctx, deleteParams)
+		}
+		_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+		return
+	}
+	if action == "home" {
+		page = 1
+	}
+	if page < 1 {
+		page = 1
+	}
+	if h.Search.PlatformManager == nil {
+		return
+	}
+	plat := h.Search.PlatformManager.Get(state.platform)
+	if plat == nil {
+		return
+	}
+	limit := state.limit
+	if limit <= 0 {
+		limit = page * searchPageSize
+	}
+	tracks, err := plat.Search(ctx, state.keyword, limit)
+	if err != nil {
+		params := &bot.EditMessageTextParams{ChatID: msg.Chat.ID, MessageID: msg.ID, Text: "搜索失败，请稍后重试"}
+		if h.RateLimiter != nil {
+			_, _ = telegram.EditMessageTextWithRetry(ctx, h.RateLimiter, b, params)
+		} else {
+			_, _ = b.EditMessageText(ctx, params)
+		}
+		return
+	}
+	if len(tracks) == 0 {
+		params := &bot.EditMessageTextParams{ChatID: msg.Chat.ID, MessageID: msg.ID, Text: noResults}
+		if h.RateLimiter != nil {
+			_, _ = telegram.EditMessageTextWithRetry(ctx, h.RateLimiter, b, params)
+		} else {
+			_, _ = b.EditMessageText(ctx, params)
+		}
+		return
+	}
+	textHeader := fmt.Sprintf("%s *%s* 搜索结果\n\n", platformEmoji(state.platform), mdV2Replacer.Replace(platformDisplayName(state.platform)))
+	pageText, keyboard := h.Search.buildSearchPage(tracks, state.platform, state.keyword, state.quality, state.requesterID, messageID, page)
+	text := textHeader + pageText
+	disablePreview := true
+	params := &bot.EditMessageTextParams{
+		ChatID:             msg.Chat.ID,
+		MessageID:          msg.ID,
+		Text:               text,
+		ParseMode:          models.ParseModeMarkdown,
+		ReplyMarkup:        keyboard,
+		LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: &disablePreview},
+	}
+	if h.RateLimiter != nil {
+		_, _ = telegram.EditMessageTextWithRetry(ctx, h.RateLimiter, b, params)
+	} else {
+		_, _ = b.EditMessageText(ctx, params)
+	}
+	_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+}
+
+func (h *SearchHandler) searchLimit(platformName string) int {
+	if strings.TrimSpace(platformName) == "netease" {
+		return neteaseSearchLimit
+	}
+	return defaultSearchLimit
+}
+
+func (h *SearchHandler) resolveDefaultQuality(ctx context.Context, message *models.Message, userID int64) string {
+	qualityValue := "hires"
+	if h.Repo == nil {
+		return qualityValue
+	}
+	if message != nil && message.Chat.Type != "private" {
+		if settings, err := h.Repo.GetGroupSettings(ctx, message.Chat.ID); err == nil && settings != nil {
+			if strings.TrimSpace(settings.DefaultQuality) != "" {
+				qualityValue = settings.DefaultQuality
+			}
+		}
+		return qualityValue
+	}
+	if userID != 0 {
+		if settings, err := h.Repo.GetUserSettings(ctx, userID); err == nil && settings != nil {
+			if strings.TrimSpace(settings.DefaultQuality) != "" {
+				qualityValue = settings.DefaultQuality
+			}
+		}
+	}
+	return qualityValue
+}
+
+func (h *SearchHandler) buildSearchPage(tracks []platform.Track, platformName, keyword, qualityValue string, requesterID int64, messageID int, page int) (string, *models.InlineKeyboardMarkup) {
+	if page < 1 {
+		page = 1
+	}
+	pageCount := 1
+	if len(tracks) > 0 {
+		pageCount = (len(tracks)-1)/searchPageSize + 1
+	}
+	if page > pageCount {
+		page = pageCount
+	}
+	start := (page - 1) * searchPageSize
+	if start < 0 {
+		start = 0
+	}
+	end := start + searchPageSize
+	if end > len(tracks) {
+		end = len(tracks)
+	}
+	var textMessage strings.Builder
+	if strings.TrimSpace(keyword) != "" {
+		textMessage.WriteString(fmt.Sprintf("关键词: %s\n", mdV2Replacer.Replace(keyword)))
+	}
+	if pageCount > 1 {
+		textMessage.WriteString(fmt.Sprintf("第 %d/%d 页\n\n", page, pageCount))
+	} else {
+		textMessage.WriteString("\n")
+	}
+	buttons := make([]models.InlineKeyboardButton, 0, searchPageSize)
+	for i := start; i < end; i++ {
+		track := tracks[i]
+		escapedTitle := mdV2Replacer.Replace(track.Title)
+		trackLink := escapedTitle
+		if strings.TrimSpace(track.URL) != "" {
+			trackLink = fmt.Sprintf("[%s](%s)", escapedTitle, track.URL)
+		}
+		var artistParts []string
+		for _, artist := range track.Artists {
+			escapedArtist := mdV2Replacer.Replace(artist.Name)
+			if strings.TrimSpace(artist.URL) != "" {
+				artistParts = append(artistParts, fmt.Sprintf("[%s](%s)", escapedArtist, artist.URL))
+			} else {
+				artistParts = append(artistParts, escapedArtist)
+			}
+		}
+		songArtists := strings.Join(artistParts, " / ")
+		textMessage.WriteString(fmt.Sprintf("%d\\. 「%s」 \\- %s\n", i-start+1, trackLink, songArtists))
+		callbackData := fmt.Sprintf("music %s %s %s %d", platformName, track.ID, qualityValue, requesterID)
+		buttons = append(buttons, models.InlineKeyboardButton{
+			Text:         fmt.Sprintf("%d", i-start+1),
+			CallbackData: callbackData,
+		})
+	}
+
+	var rows [][]models.InlineKeyboardButton
+	if len(buttons) > 0 {
+		rows = append(rows, buttons)
+	}
+	if pageCount > 1 {
+		navRow := make([]models.InlineKeyboardButton, 0, 2)
+		if page == 1 {
+			navRow = append(navRow, models.InlineKeyboardButton{Text: "关闭", CallbackData: fmt.Sprintf("search %d close %d", messageID, requesterID)})
+			navRow = append(navRow, models.InlineKeyboardButton{Text: "下一页", CallbackData: fmt.Sprintf("search %d page %d %d", messageID, page+1, requesterID)})
+		} else if page == pageCount {
+			navRow = append(navRow, models.InlineKeyboardButton{Text: "上一页", CallbackData: fmt.Sprintf("search %d page %d %d", messageID, page-1, requesterID)})
+			navRow = append(navRow, models.InlineKeyboardButton{Text: "回到首页", CallbackData: fmt.Sprintf("search %d home %d", messageID, requesterID)})
+		} else {
+			navRow = append(navRow, models.InlineKeyboardButton{Text: "上一页", CallbackData: fmt.Sprintf("search %d page %d %d", messageID, page-1, requesterID)})
+			navRow = append(navRow, models.InlineKeyboardButton{Text: "下一页", CallbackData: fmt.Sprintf("search %d page %d %d", messageID, page+1, requesterID)})
+		}
+		rows = append(rows, navRow)
+	} else if page == 1 {
+		rows = append(rows, []models.InlineKeyboardButton{{Text: "关闭", CallbackData: fmt.Sprintf("search %d close %d", messageID, requesterID)}})
+	}
+	keyboard := &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+	return textMessage.String(), keyboard
+}
+
+func (h *SearchHandler) storeSearchState(messageID int, state *searchState) {
+	if messageID == 0 || state == nil {
+		return
+	}
+	h.searchMu.Lock()
+	defer h.searchMu.Unlock()
+	if h.searchCache == nil {
+		h.searchCache = make(map[int]*searchState)
+	}
+	h.cleanupSearchStateLocked()
+	h.searchCache[messageID] = state
+}
+
+func (h *SearchHandler) getSearchState(messageID int) (*searchState, bool) {
+	h.searchMu.Lock()
+	defer h.searchMu.Unlock()
+	if h.searchCache == nil {
+		return nil, false
+	}
+	h.cleanupSearchStateLocked()
+	state, ok := h.searchCache[messageID]
+	if ok && state != nil {
+		state.updatedAt = time.Now()
+	}
+	return state, ok
+}
+
+func (h *SearchHandler) cleanupSearchStateLocked() {
+	if h.searchCache == nil {
+		return
+	}
+	cutoff := time.Now().Add(-searchCacheTTL)
+	for key, state := range h.searchCache {
+		if state == nil || state.updatedAt.Before(cutoff) {
+			delete(h.searchCache, key)
+		}
 	}
 }

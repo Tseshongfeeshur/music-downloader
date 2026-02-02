@@ -20,8 +20,10 @@ MusicBot-Go/
 │   │   ├── interface.go         # Platform 核心接口定义
 │   │   ├── manager.go           # 平台管理器 (路由和调度)
 │   │   ├── registry/            # 平台注册中心
+│   │   ├── plugins/             # 插件注册表 (Contribution)
 │   │   ├── types.go             # 通用类型定义
 │   │   └── quality.go           # 音质处理
+│   ├── recognize/               # 识曲服务抽象
 │   ├── telegram/                # Telegram Bot 集成
 │   │   ├── bot.go               # Bot 实例创建
 │   │   └── handler/             # 命令处理器
@@ -36,10 +38,14 @@ MusicBot-Go/
 │   ├── interfaces.go            # 全局接口定义
 │   └── types.go                 # 全局类型定义
 └── plugins/                     # 平台插件
+    ├── all/                     # 插件聚合 (空白导入)
     └── netease/                 # 网易云音乐插件
-        ├── client.go            # API 客户端 (重试 + 熔断)
+        ├── client.go            # API 客户端
         ├── platform.go          # Platform 接口实现
         ├── matcher.go           # URL 匹配器
+        ├── textmatcher.go       # 文本匹配器 (短链/纯 ID)
+        ├── recognizer.go        # 识曲适配器
+        ├── register.go          # 插件注册
         └── *_test.go            # 单元测试
 ```
 
@@ -64,16 +70,17 @@ main.go
 ```
 Telegram Update
   └─> Router
-       └─> MusicHandler.Handle()
-            ├─> 解析 URL/ID
-            ├─> PlatformManager.MatchURL()       # 识别平台
-            ├─> Platform.GetSongInfo()           # 获取歌曲信息
-            ├─> Repository.FindByMusicID()       # 检查缓存
-            ├─> (缓存未命中)
-            │    ├─> Platform.DownloadSong()    # 下载歌曲
-            │    ├─> 处理封面/元数据
-            │    └─> Repository.Save()          # 保存缓存
-            └─> Bot.SendAudio()                  # 发送给用户
+        └─> MusicHandler.Handle()
+             ├─> 解析文本/URL
+             ├─> PlatformManager.MatchText()/MatchURL()  # 识别平台
+             ├─> Platform.GetTrack()                     # 获取歌曲信息
+             ├─> Repository.FindByPlatformTrackID()      # 检查缓存
+             ├─> (缓存未命中)
+             │    ├─> Platform.GetDownloadInfo()         # 获取下载信息
+             │    ├─> DownloadService.Download()         # 下载歌曲
+             │    ├─> 处理封面/元数据
+             │    └─> Repository.Create()                # 保存缓存
+             └─> Bot.SendAudio()                  # 发送给用户
 ```
 
 ### 3. 平台插件系统
@@ -82,14 +89,15 @@ Telegram Update
 Handler
   └─> PlatformManager
        ├─> Plugins Registry (init 注册工厂)
+       ├─> Contribution (Platform / ID3 / Recognizer)
        ├─> Registry.GetPlatform("netease")
-       ├─> Registry.MatchURL(url)
+       ├─> Registry.MatchText(text)/MatchURL(url)
        └─> Platform Interface
-            ├─> GetSongInfo()
-            ├─> DownloadSong()
-            ├─> SearchSongs()
+            ├─> GetTrack()
+            ├─> GetDownloadInfo()
+            ├─> Search()
             ├─> GetLyrics()
-            └─> RecognizeSong()
+            └─> RecognizeAudio()
 ```
 
 ## 关键模块说明
@@ -100,21 +108,21 @@ Handler
 ```go
 type Platform interface {
     Name() string
-    DisplayName() string
-    Emoji() string
-    
-    // 能力声明
+
     SupportsDownload() bool
     SupportsSearch() bool
     SupportsLyrics() bool
     SupportsRecognition() bool
-    
-    // 核心功能
-    GetSongInfo(ctx, id string, quality Quality) (*SongInfo, error)
-    DownloadSong(ctx, id string, quality Quality) (io.ReadCloser, *SongInfo, error)
-    SearchSongs(ctx, keyword string, limit int) ([]SearchResult, error)
-    GetLyrics(ctx, id string) (*Lyrics, error)
-    RecognizeSong(ctx, audioData []byte) (*RecognitionResult, error)
+    Capabilities() Capabilities
+
+    GetDownloadInfo(ctx context.Context, trackID string, quality Quality) (*DownloadInfo, error)
+    Search(ctx context.Context, query string, limit int) ([]Track, error)
+    GetLyrics(ctx context.Context, trackID string) (*Lyrics, error)
+    RecognizeAudio(ctx context.Context, audioData io.Reader) (*Track, error)
+    GetTrack(ctx context.Context, trackID string) (*Track, error)
+    GetArtist(ctx context.Context, artistID string) (*Artist, error)
+    GetAlbum(ctx context.Context, albumID string) (*Album, error)
+    GetPlaylist(ctx context.Context, playlistID string) (*Playlist, error)
 }
 ```
 
@@ -133,12 +141,16 @@ type Platform interface {
 **核心接口**: `SongRepository`
 ```go
 type SongRepository interface {
-    FindByMusicID(ctx, musicID int) (*SongInfo, error)
-    FindByPlatformAndID(ctx, platform, id string) (*SongInfo, error)
-    Save(ctx, info *SongInfo) error
-    Delete(ctx, musicID int) error
-    GetUserSettings(ctx, userID int64) (*UserSettings, error)
-    UpdateUserSettings(ctx, settings *UserSettings) error
+    FindByMusicID(ctx context.Context, musicID int) (*SongInfo, error)
+    FindByPlatformTrackID(ctx context.Context, platform, trackID, quality string) (*SongInfo, error)
+    FindByFileID(ctx context.Context, fileID string) (*SongInfo, error)
+    Create(ctx context.Context, song *SongInfo) error
+    Update(ctx context.Context, song *SongInfo) error
+    Delete(ctx context.Context, musicID int) error
+    DeleteByPlatformTrackID(ctx context.Context, platform, trackID, quality string) error
+    DeleteAllQualitiesByPlatformTrackID(ctx context.Context, platform, trackID string) error
+    GetUserSettings(ctx context.Context, userID int64) (*UserSettings, error)
+    UpdateUserSettings(ctx context.Context, settings *UserSettings) error
 }
 ```
 
@@ -185,7 +197,7 @@ type SongRepository interface {
 ### 集成点
 - **SearchHandler**: 使用用户默认平台搜索
 - **MusicHandler**: 使用用户默认音质下载
-- **平台回退**: 搜索失败时自动切换到网易云 (仅关键词搜索)
+- **平台回退**: 搜索失败时自动切换到 `SearchFallbackPlatform`
 
 ### 数据库
 ```sql

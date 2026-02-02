@@ -174,10 +174,11 @@ func platformDisplayName(platformName string) string {
 }
 
 func platformTag(platformName string) string {
-	if strings.TrimSpace(platformName) == "" {
+	display := strings.TrimSpace(platformDisplayName(platformName))
+	if display == "" {
 		return "music"
 	}
-	return platformName
+	return display
 }
 
 func fillSongInfoFromTrack(songInfo *botpkg.SongInfo, track *platform.Track, platformName, trackID string, message *models.Message) {

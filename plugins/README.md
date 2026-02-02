@@ -37,7 +37,7 @@ MusicBot-Go 使用基于接口的插件系统，允许轻松扩展对不同音�
 
 1. **创建包目录**: `plugins/<platform_name>/`
 2. **实现 `Platform` 接口**: 在该目录下创建 `platform.go`。
-3. **实现 `URLMatcher` 接口** (可选但推荐): 允许 Bot 识别该平台的 URL。
+3. **实现 `URLMatcher`/`TextMatcher` 接口** (可选但推荐): 允许 Bot 识别该平台的 URL 或短链/纯 ID 文本。
 4. **编写测试**: 确保插件逻辑正确。
 5. **注册插件**: 在插件包内通过工厂注册，并在 `plugins/all` 中进行空白导入。
 
@@ -49,6 +49,7 @@ package spotify
 import (
     "context"
     "io"
+
     "github.com/liuran001/MusicBot-Go/bot/platform"
 )
 
@@ -63,7 +64,43 @@ func (p *SpotifyPlatform) SupportsSearch() bool      { return false }
 func (p *SpotifyPlatform) SupportsLyrics() bool      { return false }
 func (p *SpotifyPlatform) SupportsRecognition() bool { return false }
 
-// 实现其他必需方法，返回 platform.ErrUnsupported...
+func (p *SpotifyPlatform) Capabilities() platform.Capabilities {
+    return platform.Capabilities{}
+}
+
+func (p *SpotifyPlatform) GetDownloadInfo(ctx context.Context, trackID string, quality platform.Quality) (*platform.DownloadInfo, error) {
+    return nil, platform.ErrUnsupported
+}
+
+func (p *SpotifyPlatform) Search(ctx context.Context, query string, limit int) ([]platform.Track, error) {
+    return nil, platform.ErrUnsupported
+}
+
+func (p *SpotifyPlatform) GetLyrics(ctx context.Context, trackID string) (*platform.Lyrics, error) {
+    return nil, platform.ErrUnsupported
+}
+
+func (p *SpotifyPlatform) RecognizeAudio(ctx context.Context, audioData io.Reader) (*platform.Track, error) {
+    return nil, platform.ErrUnsupported
+}
+
+func (p *SpotifyPlatform) GetTrack(ctx context.Context, trackID string) (*platform.Track, error) {
+    return nil, platform.ErrUnsupported
+}
+
+func (p *SpotifyPlatform) GetArtist(ctx context.Context, artistID string) (*platform.Artist, error) {
+    return nil, platform.ErrUnsupported
+}
+
+func (p *SpotifyPlatform) GetAlbum(ctx context.Context, albumID string) (*platform.Album, error) {
+    return nil, platform.ErrUnsupported
+}
+
+func (p *SpotifyPlatform) GetPlaylist(ctx context.Context, playlistID string) (*platform.Playlist, error) {
+    return nil, platform.ErrUnsupported
+}
+
+// 其他方法按需实现或返回 ErrUnsupported
 ```
 
 ---
@@ -72,7 +109,7 @@ func (p *SpotifyPlatform) SupportsRecognition() bool { return false }
 
 ### Platform 接口
 
-完整定义见 `internal/platform/interface.go`。
+完整定义见 `bot/platform/interface.go`。
 
 #### 必需方法
 
@@ -85,13 +122,13 @@ func (p *SpotifyPlatform) SupportsRecognition() bool { return false }
 - `SupportsSearch() bool`
 - `SupportsLyrics() bool`
 - `SupportsRecognition() bool`
+- `Capabilities() Capabilities`
 
-**Download(ctx context.Context, trackID string, quality Quality) (io.ReadCloser, *TrackMetadata, error)**
-- 下载音频流。
+**GetDownloadInfo(ctx context.Context, trackID string, quality Quality) (*DownloadInfo, error)**
+- 获取下载信息（URL、大小、格式、码率等）。
 - `trackID`: 平台特定的曲目 ID。
-- `quality`: 请求的音质 (Standard/High/Lossless/HiRes)。
-- 返回: 音频流 (`io.ReadCloser`)、元数据、错误。
-- **注意**: 即使不支持请求的音质，也应尝试返回最佳可用音质，并在元数据中注明。
+- `quality`: 请求的音质 (standard/high/lossless/hires)。
+- **注意**: 即使不支持请求的音质，也应返回最佳可用音质。
 
 **Search(ctx context.Context, query string, limit int) ([]Track, error)**
 - 搜索曲目。
@@ -112,6 +149,10 @@ func (p *SpotifyPlatform) SupportsRecognition() bool { return false }
 - 听歌识曲。
 - 接收原始音频流，返回识别到的曲目。
 
+#### 可选接口
+- `URLMatcher`: 解析平台 URL。
+- `TextMatcher`: 解析短链/纯 ID 文本（例如分享短链）。
+
 ---
 
 ## 实现示例: Spotify 插件
@@ -120,10 +161,11 @@ func (p *SpotifyPlatform) SupportsRecognition() bool { return false }
 
 ### 文件结构
 ```
-internal/platform/spotify/
+plugins/spotify/
 ├── platform.go    # 主实现
 ├── matcher.go     # URL 匹配
 ├── types.go       # 类型转换辅助
+├── register.go    # 插件注册
 └── platform_test.go
 ```
 
@@ -169,8 +211,12 @@ func (p *SpotifyPlatform) SupportsRecognition() bool {
     return false
 }
 
-func (p *SpotifyPlatform) Download(ctx context.Context, trackID string, quality platform.Quality) (io.ReadCloser, *platform.TrackMetadata, error) {
-    return nil, nil, platform.ErrUnsupported
+func (p *SpotifyPlatform) Capabilities() platform.Capabilities {
+    return platform.Capabilities{Search: true}
+}
+
+func (p *SpotifyPlatform) GetDownloadInfo(ctx context.Context, trackID string, quality platform.Quality) (*platform.DownloadInfo, error) {
+    return nil, platform.ErrUnsupported
 }
 
 func (p *SpotifyPlatform) Search(ctx context.Context, query string, limit int) ([]platform.Track, error) {
@@ -203,6 +249,18 @@ func (p *SpotifyPlatform) RecognizeAudio(ctx context.Context, audioData io.Reade
     return nil, platform.ErrUnsupported
 }
 
+func (p *SpotifyPlatform) GetArtist(ctx context.Context, artistID string) (*platform.Artist, error) {
+    return nil, platform.ErrUnsupported
+}
+
+func (p *SpotifyPlatform) GetAlbum(ctx context.Context, albumID string) (*platform.Album, error) {
+    return nil, platform.ErrUnsupported
+}
+
+func (p *SpotifyPlatform) GetPlaylist(ctx context.Context, playlistID string) (*platform.Playlist, error) {
+    return nil, platform.ErrUnsupported
+}
+
 // 其他方法实现...
 ```
 
@@ -232,9 +290,9 @@ func (p *SpotifyPlatform) convertTrack(st *spotify.FullTrack) platform.Track {
 
 ---
 
-## URL 匹配
+## URL / 文本匹配
 
-实现 `URLMatcher` 接口允许 Bot 自动识别并处理特定平台的链接。
+实现 `URLMatcher` 接口允许 Bot 自动识别并处理特定平台的链接；实现 `TextMatcher` 可处理短链/纯 ID 等文本输入。
 
 ### matcher.go
 
@@ -268,6 +326,15 @@ func (m *URLMatcher) MatchURL(rawURL string) (string, bool) {
 }
 ```
 
+### TextMatcher (可选)
+
+```go
+func (p *SpotifyPlatform) MatchText(text string) (string, bool) {
+    // 解析短链或纯 ID，返回 trackID
+    return "", false
+}
+```
+
 ### 集成到 Platform
 
 ```go
@@ -281,7 +348,7 @@ func (p *SpotifyPlatform) MatchURL(url string) (string, bool) {
 
 ## 错误处理
 
-请使用 `internal/platform/errors.go` 中定义的统一错误处理机制。
+请使用 `bot/platform/errors.go` 中定义的统一错误处理机制。
 
 - **资源未找到**: `platform.NewNotFoundError(platform, resource, id)`
 - **速率限制**: `platform.NewRateLimitedError(platform)`
@@ -353,6 +420,8 @@ func buildContribution(cfg *config.Config, logger *logpkg.Logger) (*platformplug
 }
 ```
 
+> `Contribution` 还可选提供 `ID3` 标签提供器与 `Recognizer` 识曲服务。
+
 ```go
 // plugins/all/all.go
 package all
@@ -381,7 +450,7 @@ import (
 ## FAQ
 
 **Q: 我的平台不支持下载，只能搜索，可以吗？**
-A: 完全可以。只需在 `SupportsDownload()` 返回 `false`，并在 `Download()` 中返回 `platform.ErrUnsupported`。
+A: 完全可以。只需在 `SupportsDownload()` 返回 `false`，并在 `GetDownloadInfo()` 中返回 `platform.ErrUnsupported`。
 
 **Q: 如何处理 API Token 过期？**
 A: 建议在插件内部实现 Token 自动刷新机制，对外部调用者透明。

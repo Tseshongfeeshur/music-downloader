@@ -21,6 +21,7 @@ type Router struct {
 	Settings         MessageHandler
 	Callback         CallbackHandler
 	SettingsCallback CallbackHandler
+	SearchCallback   CallbackHandler
 	Inline           InlineHandler
 	PlatformManager  platform.Manager
 }
@@ -107,6 +108,7 @@ func (r *Router) Register(b *bot.Bot, botName string) {
 
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "music", bot.MatchTypePrefix, r.wrapCallback(r.Callback))
 	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "settings", bot.MatchTypePrefix, r.wrapCallback(r.SettingsCallback))
+	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "search", bot.MatchTypePrefix, r.wrapCallback(r.SearchCallback))
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		return update.InlineQuery != nil
 	}, r.wrapInline(r.Inline))
