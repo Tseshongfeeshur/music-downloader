@@ -47,47 +47,47 @@ func TestURLMatcherMatchURL(t *testing.T) {
 		{
 			name:      "album URL",
 			url:       "https://music.163.com/album?id=12345",
-			wantID:    "12345",
-			wantMatch: true,
+			wantID:    "",
+			wantMatch: false,
 		},
 		{
 			name:      "album URL with hash fragment",
 			url:       "https://music.163.com/#/album?id=54321",
-			wantID:    "54321",
-			wantMatch: true,
+			wantID:    "",
+			wantMatch: false,
 		},
 		// Playlist URLs
 		{
 			name:      "playlist URL",
 			url:       "https://music.163.com/playlist?id=99999",
-			wantID:    "99999",
-			wantMatch: true,
+			wantID:    "",
+			wantMatch: false,
 		},
 		{
 			name:      "playlist URL with hash fragment",
 			url:       "https://music.163.com/#/playlist?id=88888",
-			wantID:    "88888",
-			wantMatch: true,
+			wantID:    "",
+			wantMatch: false,
 		},
 		// Artist URLs
 		{
 			name:      "artist URL",
 			url:       "https://music.163.com/artist?id=33333",
-			wantID:    "33333",
-			wantMatch: true,
+			wantID:    "",
+			wantMatch: false,
 		},
 		{
 			name:      "artist URL with hash fragment",
 			url:       "https://music.163.com/#/artist?id=44444",
-			wantID:    "44444",
-			wantMatch: true,
+			wantID:    "",
+			wantMatch: false,
 		},
 		// DJ URLs
 		{
 			name:      "DJ URL",
 			url:       "https://music.163.com/dj?id=55555",
-			wantID:    "55555",
-			wantMatch: true,
+			wantID:    "",
+			wantMatch: false,
 		},
 		// Path-based URL (fallback)
 		{
@@ -113,8 +113,8 @@ func TestURLMatcherMatchURL(t *testing.T) {
 		{
 			name:      "complex hash fragment",
 			url:       "https://music.163.com/#/discover/toplist?id=19723756",
-			wantID:    "19723756",
-			wantMatch: true,
+			wantID:    "",
+			wantMatch: false,
 		},
 		// Edge cases with different ID formats
 		{

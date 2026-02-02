@@ -5,8 +5,8 @@ import (
 	"strings"
 )
 
-// URLMatcher implements platform.URLMatcher for NetEase music URLs.
-// It extracts track IDs from NetEase URLs in various formats.
+// URLMatcher implements platform.URLMatcher for NetEase song URLs.
+// It extracts track IDs from NetEase song URLs in various formats.
 type URLMatcher struct{}
 
 // NewURLMatcher creates a new NetEase URL matcher.
@@ -20,12 +20,8 @@ func NewURLMatcher() *URLMatcher {
 //   - https://music.163.com/song?id=1234567
 //   - https://music.163.com/#/song?id=1234567
 //   - https://y.music.163.com/m/song?id=1234567 (mobile)
-//   - https://music.163.com/album?id=67890
-//   - https://music.163.com/playlist?id=11111
-//   - https://music.163.com/artist?id=22222
-//   - https://music.163.com/dj?id=33333
 //
-// Returns the extracted ID and true if the URL is a valid NetEase URL,
+// Returns the extracted ID and true if the URL is a valid NetEase song URL,
 // or an empty string and false if the URL is not recognized.
 func (m *URLMatcher) MatchURL(rawURL string) (trackID string, matched bool) {
 	if rawURL == "" {
@@ -46,6 +42,10 @@ func (m *URLMatcher) MatchURL(rawURL string) (trackID string, matched bool) {
 	}
 
 	if !strings.Contains(hostname, "music.163.com") {
+		return "", false
+	}
+
+	if !hasSongMarker(parsed.Path, parsed.Fragment) {
 		return "", false
 	}
 
@@ -88,6 +88,24 @@ func (m *URLMatcher) MatchURL(rawURL string) (trackID string, matched bool) {
 	}
 
 	return "", false
+}
+
+func hasSongMarker(path, fragment string) bool {
+	for _, seg := range strings.Split(strings.Trim(path, "/"), "/") {
+		if seg == "song" {
+			return true
+		}
+	}
+	if fragment == "" {
+		return false
+	}
+	frag := strings.TrimPrefix(fragment, "/")
+	frag = strings.SplitN(frag, "?", 2)[0]
+	parts := strings.Split(strings.Trim(frag, "/"), "/")
+	if len(parts) > 0 && parts[0] == "song" {
+		return true
+	}
+	return false
 }
 
 // allDigits checks if a string contains only digits.
