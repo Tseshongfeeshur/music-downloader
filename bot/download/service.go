@@ -188,9 +188,16 @@ func (s *DownloadService) downloadOnce(ctx context.Context, rawURL, originalHost
 	if err != nil {
 		return 0, err
 	}
-	defer file.Close()
 
-	return util.CopyWithProgress(file, resp.Body, info.Size, progress)
+	written, err := util.CopyWithProgress(file, resp.Body, info.Size, progress)
+	closeErr := file.Close()
+	if err != nil {
+		return written, err
+	}
+	if closeErr != nil {
+		return written, closeErr
+	}
+	return written, nil
 }
 
 func (s *DownloadService) newClientForOverride(serverName, overrideAddr, rawURL string) *http.Client {

@@ -67,7 +67,8 @@ func New(ctx context.Context, configPath string, build BuildInfo) (*App, error) 
 	}
 	repo.SetDefaults("netease", conf.GetString("DefaultQuality"))
 
-	pool := worker.New(4)
+	poolSize := conf.GetInt("WorkerPoolSize")
+	pool := worker.New(poolSize)
 
 	musicU := conf.GetPluginString("netease", "music_u")
 	if musicU == "" {
@@ -84,7 +85,7 @@ func New(ctx context.Context, configPath string, build BuildInfo) (*App, error) 
 		return nil, fmt.Errorf("init telegram: %w", err)
 	}
 
-	recognizeService := netease.NewRecognizeService(3737)
+	recognizeService := netease.NewRecognizeService(conf.GetInt("RecognizePort"))
 
 	return &App{
 		Config:           conf,
@@ -128,6 +129,11 @@ func (a *App) Start(ctx context.Context) error {
 		botName = me.Username
 	}
 
+	cacheDir := strings.TrimSpace(a.Config.GetString("CacheDir"))
+	if cacheDir == "" {
+		cacheDir = "./cache"
+	}
+
 	downloadService := download.NewDownloadService(download.DownloadServiceOptions{
 		Timeout:              time.Duration(a.Config.GetInt("DownloadTimeout")) * time.Second,
 		ReverseProxy:         a.Config.GetString("ReverseProxy"),
@@ -143,21 +149,42 @@ func (a *App) Start(ctx context.Context) error {
 		tagProviders["netease"] = netease.NewID3Provider(a.Netease)
 	}
 
-	// Initialize rate limiter: 1 msg/sec with burst of 3
-	rateLimiter := telegram.NewRateLimiter(1.0, 3)
+	rateLimitPerSecond := a.Config.GetFloat64("RateLimitPerSecond")
+	if rateLimitPerSecond <= 0 {
+		rateLimitPerSecond = 1.0
+	}
+	rateLimitBurst := a.Config.GetInt("RateLimitBurst")
+	if rateLimitBurst <= 0 {
+		rateLimitBurst = 3
+	}
+	rateLimiter := telegram.NewRateLimiter(rateLimitPerSecond, rateLimitBurst)
 	rateLimiter.SetLogger(a.Logger)
+
+	downloadConcurrency := a.Config.GetInt("DownloadConcurrency")
+	var downloadLimiter chan struct{}
+	if downloadConcurrency > 0 {
+		downloadLimiter = make(chan struct{}, downloadConcurrency)
+	}
+	uploadConcurrency := a.Config.GetInt("UploadConcurrency")
+	var uploadLimiter chan struct{}
+	if uploadConcurrency > 0 {
+		uploadLimiter = make(chan struct{}, uploadConcurrency)
+	}
+	uploadQueueSize := a.Config.GetInt("UploadQueueSize")
 
 	musicHandler := &handler.MusicHandler{
 		Repo:            a.DB,
 		Pool:            a.Pool,
 		Logger:          a.Logger,
-		CacheDir:        "./cache",
+		CacheDir:        cacheDir,
 		BotName:         botName,
 		PlatformManager: a.PlatformManager,
 		DownloadService: downloadService,
 		ID3Service:      id3Service,
 		TagProviders:    tagProviders,
-		UploadQueueSize: 20,
+		Limiter:         downloadLimiter,
+		UploadLimiter:   uploadLimiter,
+		UploadQueueSize: uploadQueueSize,
 		UploadBot:       a.Telegram.UploadClient(),
 		RateLimiter:     rateLimiter,
 	}
@@ -173,7 +200,7 @@ func (a *App) Start(ctx context.Context) error {
 		Music:            musicHandler,
 		Search:           &handler.SearchHandler{PlatformManager: a.PlatformManager, Repo: a.DB, RateLimiter: rateLimiter},
 		Lyric:            &handler.LyricHandler{PlatformManager: a.PlatformManager, RateLimiter: rateLimiter},
-		Recognize:        &handler.RecognizeHandler{CacheDir: "./cache", Music: musicHandler, RateLimiter: rateLimiter, RecognizeService: a.RecognizeService, Logger: a.Logger},
+		Recognize:        &handler.RecognizeHandler{CacheDir: cacheDir, Music: musicHandler, RateLimiter: rateLimiter, RecognizeService: a.RecognizeService, Logger: a.Logger},
 		About:            &handler.AboutHandler{RuntimeVer: a.Build.RuntimeVer, BinVersion: a.Build.BinVersion, CommitSHA: a.Build.CommitSHA, BuildTime: a.Build.BuildTime, BuildArch: a.Build.BuildArch, RateLimiter: rateLimiter},
 		Status:           &handler.StatusHandler{Repo: a.DB, PlatformManager: a.PlatformManager, RateLimiter: rateLimiter},
 		Settings:         settingsHandler,

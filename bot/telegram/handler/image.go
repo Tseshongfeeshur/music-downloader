@@ -67,21 +67,27 @@ func resizeImg(filePath string) (string, error) {
 	if err != nil {
 		return "", fmt.Errorf("create image file error %s", err)
 	}
-	defer out.Close()
 
 	if err := jpeg.Encode(out, newImg, &jpeg.Options{Quality: 85}); err != nil {
+		_ = out.Close()
 		return "", err
 	}
 	if stat, err := out.Stat(); err == nil && stat.Size() > 200*1024 {
 		if _, err := out.Seek(0, io.SeekStart); err != nil {
+			_ = out.Close()
 			return "", err
 		}
 		if err := out.Truncate(0); err != nil {
+			_ = out.Close()
 			return "", err
 		}
 		if err := jpeg.Encode(out, newImg, &jpeg.Options{Quality: 60}); err != nil {
+			_ = out.Close()
 			return "", err
 		}
+	}
+	if err := out.Close(); err != nil {
+		return "", err
 	}
 	return filePath + ".resize.jpg", nil
 }

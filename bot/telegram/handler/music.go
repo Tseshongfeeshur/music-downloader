@@ -499,8 +499,12 @@ func (h *MusicHandler) sendMusic(ctx context.Context, b *bot.Bot, statusMsg *mod
 
 	h.registerQueuedStatus(b, statusMsg, songInfo)
 
+	baseCtx := ctx
+	if baseCtx == nil {
+		baseCtx = context.Background()
+	}
 	resultCh := make(chan uploadResult, 1)
-	uploadCtx, cancel := context.WithCancel(context.Background())
+	uploadCtx, cancel := context.WithCancel(baseCtx)
 	uploadBot := b
 	if h.UploadBot != nil {
 		uploadBot = h.UploadBot
@@ -531,7 +535,7 @@ func (h *MusicHandler) sendMusic(ctx context.Context, b *bot.Bot, statusMsg *mod
 			}
 			if h.Repo != nil {
 				if result.err == nil && songCopy.FileID != "" {
-					if err := h.Repo.Create(context.Background(), &songCopy); err != nil {
+					if err := h.Repo.Create(baseCtx, &songCopy); err != nil {
 						if h.Logger != nil {
 							h.Logger.Error("failed to save song info", "platform", platformName, "trackID", trackID, "error", err)
 						}
@@ -540,13 +544,13 @@ func (h *MusicHandler) sendMusic(ctx context.Context, b *bot.Bot, statusMsg *mod
 			}
 			if statusMessage != nil && taskMessage != nil {
 				if result.err == nil {
-					_, _ = statusBot.DeleteMessage(context.Background(), &bot.DeleteMessageParams{ChatID: taskMessage.Chat.ID, MessageID: statusMessage.ID})
+					_, _ = statusBot.DeleteMessage(baseCtx, &bot.DeleteMessageParams{ChatID: taskMessage.Chat.ID, MessageID: statusMessage.ID})
 				} else {
 					errText := ""
 					if result.err != nil {
 						errText = result.err.Error()
 					}
-					statusMessage = editMessageTextOrSend(context.Background(), statusBot, h.RateLimiter, statusMessage, taskMessage.Chat.ID, fmt.Sprintf(musicInfoMsg+uploadFailed, songCopy.SongName, songCopy.SongAlbum, songCopy.FileExt, float64(songCopy.MusicSize)/1024/1024, errText))
+					statusMessage = editMessageTextOrSend(baseCtx, statusBot, h.RateLimiter, statusMessage, taskMessage.Chat.ID, fmt.Sprintf(musicInfoMsg+uploadFailed, songCopy.SongName, songCopy.SongAlbum, songCopy.FileExt, float64(songCopy.MusicSize)/1024/1024, errText))
 				}
 			}
 			cleanupFiles(cleanupCopy...)
@@ -587,7 +591,7 @@ func (h *MusicHandler) runStatusRefresher(ctx context.Context) {
 			h.queueMu.Lock()
 			if h.statusDirty {
 				h.statusDirty = false
-				h.refreshQueuedStatusesLocked()
+				h.refreshQueuedStatusesLocked(ctx)
 			}
 			h.queueMu.Unlock()
 		}
@@ -615,7 +619,11 @@ func (h *MusicHandler) processUploadTask(task uploadTask) {
 	}
 	if task.statusMsg != nil && task.statusBot != nil {
 		text := fmt.Sprintf(musicInfoMsg+uploading, task.songInfo.SongName, task.songInfo.SongAlbum, task.songInfo.FileExt, float64(task.songInfo.MusicSize)/1024/1024)
-		updated := editMessageTextOrSend(context.Background(), task.statusBot, h.RateLimiter, task.statusMsg, task.statusMsg.Chat.ID, text)
+		statusCtx := task.ctx
+		if statusCtx == nil {
+			statusCtx = context.Background()
+		}
+		updated := editMessageTextOrSend(statusCtx, task.statusBot, h.RateLimiter, task.statusMsg, task.statusMsg.Chat.ID, text)
 		if updated != nil {
 			task.statusMsg = updated
 		}
@@ -679,18 +687,21 @@ func (h *MusicHandler) dequeueQueuedStatus(statusMsg *models.Message) {
 	h.statusDirty = true
 }
 
-func (h *MusicHandler) refreshQueuedStatuses() {
+func (h *MusicHandler) refreshQueuedStatuses(ctx context.Context) {
 	if h == nil {
 		return
 	}
 	h.queueMu.Lock()
 	defer h.queueMu.Unlock()
-	h.refreshQueuedStatusesLocked()
+	h.refreshQueuedStatusesLocked(ctx)
 }
 
-func (h *MusicHandler) refreshQueuedStatusesLocked() {
+func (h *MusicHandler) refreshQueuedStatusesLocked(ctx context.Context) {
 	if len(h.queuedStatus) == 0 {
 		return
+	}
+	if ctx == nil {
+		ctx = context.Background()
 	}
 	for idx, entry := range h.queuedStatus {
 		if entry.bot == nil || entry.message == nil {
@@ -706,9 +717,9 @@ func (h *MusicHandler) refreshQueuedStatusesLocked() {
 			MessageID: entry.message.ID,
 			Text:      text,
 		}
-		_, err := entry.bot.EditMessageText(context.Background(), params)
+		_, err := entry.bot.EditMessageText(ctx, params)
 		if err != nil && strings.Contains(fmt.Sprintf("%v", err), "message to edit not found") {
-			newMsg, sendErr := entry.bot.SendMessage(context.Background(), &bot.SendMessageParams{ChatID: entry.message.Chat.ID, Text: text})
+			newMsg, sendErr := entry.bot.SendMessage(ctx, &bot.SendMessageParams{ChatID: entry.message.Chat.ID, Text: text})
 			if sendErr == nil && newMsg != nil {
 				entry.message = newMsg
 				h.queuedStatus[idx] = entry

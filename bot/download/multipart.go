@@ -241,6 +241,8 @@ func (md *MultipartDownloader) downloadSingleThread(ctx context.Context, rawURL 
 
 // downloadMultipart performs concurrent chunk downloads
 func (md *MultipartDownloader) downloadMultipart(ctx context.Context, rawURL string, info *platform.DownloadInfo, destPath string, totalSize int64, progress ProgressFunc) (int64, error) {
+	ctx, cancel := context.WithCancel(ctx)
+	defer cancel()
 	// Calculate part size
 	partSize := md.partSize
 	if partSize <= 0 {
@@ -271,6 +273,7 @@ func (md *MultipartDownloader) downloadMultipart(ctx context.Context, rawURL str
 	partCh := make(chan int, numParts)
 	errCh := make(chan error, numParts)
 	var wg sync.WaitGroup
+	var errOnce sync.Once
 
 	// Launch worker goroutines
 	for i := 0; i < md.concurrency; i++ {
@@ -278,11 +281,17 @@ func (md *MultipartDownloader) downloadMultipart(ctx context.Context, rawURL str
 		go func() {
 			defer wg.Done()
 			for partIndex := range partCh {
+				if ctx.Err() != nil {
+					return
+				}
 				part := parts[partIndex]
 				err := md.downloadPart(ctx, rawURL, info, part, tracker)
 				if err != nil {
 					part.err = err
-					errCh <- fmt.Errorf("part %d failed: %w", partIndex, err)
+					errOnce.Do(func() {
+						errCh <- fmt.Errorf("part %d failed: %w", partIndex, err)
+						cancel()
+					})
 					return
 				}
 			}
@@ -313,6 +322,9 @@ func (md *MultipartDownloader) downloadMultipart(ctx context.Context, rawURL str
 	if len(errCh) > 0 {
 		return 0, <-errCh
 	}
+	if ctx.Err() != nil {
+		return 0, ctx.Err()
+	}
 
 	tracker.final()
 
@@ -325,7 +337,7 @@ func (md *MultipartDownloader) downloadMultipart(ctx context.Context, rawURL str
 }
 
 // downloadPart downloads a single part of the file
-func (md *MultipartDownloader) downloadPart(ctx context.Context, rawURL string, info *platform.DownloadInfo, part *partDownload, tracker *progressTracker) error {
+func (md *MultipartDownloader) downloadPart(ctx context.Context, rawURL string, info *platform.DownloadInfo, part *partDownload, tracker *progressTracker) (retErr error) {
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, rawURL, nil)
 	if err != nil {
 		return err
@@ -358,7 +370,11 @@ func (md *MultipartDownloader) downloadPart(ctx context.Context, rawURL string, 
 	if err != nil {
 		return err
 	}
-	defer file.Close()
+	defer func() {
+		if closeErr := file.Close(); closeErr != nil && retErr == nil {
+			retErr = closeErr
+		}
+	}()
 
 	// Download part with progress tracking
 	buf := make([]byte, 32*1024)
@@ -404,14 +420,16 @@ func (md *MultipartDownloader) downloadPart(ctx context.Context, rawURL string, 
 }
 
 // mergeParts combines all downloaded parts into the final file
-func (md *MultipartDownloader) mergeParts(parts []*partDownload, destPath string) (int64, error) {
+func (md *MultipartDownloader) mergeParts(parts []*partDownload, destPath string) (totalWritten int64, retErr error) {
 	outFile, err := os.Create(destPath)
 	if err != nil {
 		return 0, err
 	}
-	defer outFile.Close()
-
-	var totalWritten int64
+	defer func() {
+		if closeErr := outFile.Close(); closeErr != nil && retErr == nil {
+			retErr = closeErr
+		}
+	}()
 
 	for _, part := range parts {
 		if part.err != nil {
@@ -424,10 +442,12 @@ func (md *MultipartDownloader) mergeParts(parts []*partDownload, destPath string
 		}
 
 		written, err := io.Copy(outFile, partFile)
-		partFile.Close()
-
+		closeErr := partFile.Close()
 		if err != nil {
 			return totalWritten, err
+		}
+		if closeErr != nil {
+			return totalWritten, closeErr
 		}
 
 		totalWritten += written

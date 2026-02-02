@@ -3,6 +3,7 @@ package worker
 import (
 	"context"
 	"errors"
+	"fmt"
 	"sync"
 )
 
@@ -88,6 +89,11 @@ func (p *Pool) SubmitWait(task func() error) error {
 
 	result := make(chan error, 1)
 	err := p.Submit(func() {
+		defer func() {
+			if r := recover(); r != nil {
+				result <- fmt.Errorf("task panic: %v", r)
+			}
+		}()
 		result <- task()
 	})
 	if err != nil {

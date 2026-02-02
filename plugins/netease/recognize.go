@@ -80,7 +80,10 @@ func (s *RecognizeService) Start(ctx context.Context) error {
 	s.started = true
 
 	if err := s.waitForReady(ctx, 10*time.Second); err != nil {
-		_ = s.cmd.Process.Kill()
+		if s.cmd != nil && s.cmd.Process != nil {
+			_ = s.cmd.Process.Kill()
+			_ = s.cmd.Wait()
+		}
 		s.started = false
 		return err
 	}

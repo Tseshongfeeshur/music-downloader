@@ -16,10 +16,13 @@ func VerifyMD5(filePath, expected string) (bool, error) {
 	if err != nil {
 		return false, err
 	}
-	defer file.Close()
 
 	hash := md5.New()
 	if _, err := io.Copy(hash, file); err != nil {
+		_ = file.Close()
+		return false, err
+	}
+	if err := file.Close(); err != nil {
 		return false, err
 	}
 
@@ -32,10 +35,13 @@ func CalculateMD5(filePath string) (string, error) {
 	if err != nil {
 		return "", err
 	}
-	defer file.Close()
 
 	hash := md5.New()
 	if _, err := io.Copy(hash, file); err != nil {
+		_ = file.Close()
+		return "", err
+	}
+	if err := file.Close(); err != nil {
 		return "", err
 	}
 

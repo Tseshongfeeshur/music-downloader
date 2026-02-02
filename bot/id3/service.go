@@ -279,10 +279,6 @@ func saveFlacWithMeta(audioPath string, file *flac.File) error {
 		return err
 	}
 
-	defer func() {
-		_ = out.Close()
-	}()
-
 	if _, err := out.Write([]byte("fLaC")); err != nil {
 		return err
 	}

@@ -94,8 +94,9 @@ func parseRetryAfter(err error) (int, bool) {
 	}
 
 	var retryAfter int
-	if _, parseErr := strconv.Atoi(errMsg); parseErr == nil {
-		return 0, false
+	if parsed, parseErr := strconv.Atoi(errMsg); parseErr == nil {
+		retryAfter = parsed
+		return retryAfter, retryAfter > 0
 	}
 
 	return retryAfter, retryAfter > 0
