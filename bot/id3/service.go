@@ -32,11 +32,12 @@ func (s *ID3Service) EmbedTags(audioPath string, tag *TagData, coverPath string)
 
 	ext := strings.ToLower(filepath.Ext(audioPath))
 	if tag.Extra != nil {
-		if markerData, ok := tag.Extra["netease_marker"].(marker.MarkerData); ok && ext == ".mp3" {
-			if err := s.embedMarkerTags(audioPath, markerData, coverPath); err != nil {
-				return err
+		if markerData, ok := tag.Extra["netease_marker"].(marker.MarkerData); ok {
+			if ext == ".mp3" {
+				return s.embedMp3TagsWithMarker(audioPath, tag, coverPath, markerData)
+			} else if ext == ".flac" {
+				return s.embedFlacTagsWithMarker(audioPath, tag, coverPath, markerData)
 			}
-			return s.embedMp3Lyrics(audioPath, tag)
 		}
 	}
 
@@ -67,7 +68,14 @@ func (s *ID3Service) embedMarkerTags(audioPath string, markerData marker.MarkerD
 		_ = pic.Close()
 	}
 	if err == nil {
+		if s.logger != nil {
+			s.logger.Info("embedded 163key marker", "format", filepath.Ext(audioPath))
+		}
 		return nil
+	}
+
+	if s.logger != nil {
+		s.logger.Warn("failed to embed 163key marker with cover, retrying without cover", "error", err)
 	}
 
 	if coverPath != "" {
@@ -88,6 +96,8 @@ func (s *ID3Service) embedMp3Tags(audioPath string, tagData *TagData, coverPath 
 		return err
 	}
 	defer meta.Close()
+
+	meta.SetDefaultEncoding(id3v2.EncodingUTF8)
 
 	if tagData.Title != "" {
 		meta.SetTitle(tagData.Title)
@@ -127,10 +137,15 @@ func (s *ID3Service) embedMp3Tags(audioPath string, tagData *TagData, coverPath 
 			ContentDescriptor: "LRC",
 			Lyrics:            tagData.Lyrics,
 		})
+		if s.logger != nil {
+			s.logger.Info("embedded mp3 lyrics", "lyrics_length", len(tagData.Lyrics))
+		}
+	} else if s.logger != nil {
+		s.logger.Warn("mp3 lyrics field is empty, skipping lyrics embedding")
 	}
 
 	if coverPath != "" {
-		artwork, err := readCoverWithLimit(coverPath, 512*1024)
+		artwork, err := readCoverWithLimit(coverPath, 10*1024*1024)
 		if err == nil && len(artwork) > 0 {
 			mime := http.DetectContentType(artwork[:minInt(len(artwork), 32)])
 			pic := id3v2.PictureFrame{
@@ -141,6 +156,8 @@ func (s *ID3Service) embedMp3Tags(audioPath string, tagData *TagData, coverPath 
 				Picture:     artwork,
 			}
 			meta.AddAttachedPicture(pic)
+		} else if err != nil && s.logger != nil {
+			s.logger.Warn("failed to read cover for mp3 embedding", "error", err)
 		}
 	}
 
@@ -160,14 +177,18 @@ func (s *ID3Service) embedFlacTags(audioPath string, tagData *TagData, coverPath
 	}
 
 	if coverPath != "" {
-		artwork, err := readCoverWithLimit(coverPath, 512*1024)
+		artwork, err := readCoverWithLimit(coverPath, 10*1024*1024)
 		if err == nil && len(artwork) > 0 {
 			mime := http.DetectContentType(artwork[:minInt(len(artwork), 32)])
-			picture, err := flacpicture.NewFromImageData(flacpicture.PictureTypeFrontCover, "Front cover", artwork, mime)
+			picture, err := flacpicture.NewFromImageData(flacpicture.PictureTypeFrontCover, "", artwork, mime)
 			if err == nil {
-				pictureMeta := picture.Marshal()
-				parsed.Meta = append(parsed.Meta, &pictureMeta)
+				cmt := picture.Marshal()
+				parsed.Meta = append(parsed.Meta, &cmt)
+			} else if s.logger != nil {
+				s.logger.Warn("failed to create flac picture", "error", err)
 			}
+		} else if err != nil && s.logger != nil {
+			s.logger.Warn("failed to read cover for flac embedding", "error", err)
 		}
 	}
 
@@ -201,6 +222,99 @@ func (s *ID3Service) embedFlacTags(audioPath string, tagData *TagData, coverPath
 	}
 	if tagData.Lyrics != "" {
 		_ = vorbis.Add("LYRICS", tagData.Lyrics)
+		if s.logger != nil {
+			s.logger.Info("embedded flac lyrics", "lyrics_length", len(tagData.Lyrics))
+		}
+	} else if s.logger != nil {
+		s.logger.Warn("flac lyrics field is empty, skipping lyrics embedding")
+	}
+
+	meta := vorbis.Marshal()
+	idx := -1
+	for i, m := range parsed.Meta {
+		if m.Type == flac.VorbisComment {
+			idx = i
+			break
+		}
+	}
+	if idx >= 0 {
+		parsed.Meta[idx] = &meta
+	} else {
+		parsed.Meta = append(parsed.Meta, &meta)
+	}
+
+	return saveFlacWithMeta(audioPath, parsed)
+}
+
+func (s *ID3Service) embedFlacTagsWithMarker(audioPath string, tagData *TagData, coverPath string, markerData marker.MarkerData) error {
+	file, err := os.Open(audioPath)
+	if err != nil {
+		return err
+	}
+	defer file.Close()
+
+	parsed, err := flac.ParseMetadata(file)
+	if err != nil {
+		return err
+	}
+
+	if coverPath != "" {
+		artwork, err := readCoverWithLimit(coverPath, 10*1024*1024)
+		if err == nil && len(artwork) > 0 {
+			mime := http.DetectContentType(artwork[:minInt(len(artwork), 32)])
+			picture, err := flacpicture.NewFromImageData(flacpicture.PictureTypeFrontCover, "", artwork, mime)
+			if err == nil {
+				cmt := picture.Marshal()
+				parsed.Meta = append(parsed.Meta, &cmt)
+			} else if s.logger != nil {
+				s.logger.Warn("failed to create flac picture", "error", err)
+			}
+		} else if err != nil && s.logger != nil {
+			s.logger.Warn("failed to read cover for flac embedding", "error", err)
+		}
+	}
+
+	vorbis := flacvorbis.New()
+	if tagData.Title != "" {
+		_ = vorbis.Add(flacvorbis.FIELD_TITLE, tagData.Title)
+	}
+	if tagData.Artist != "" {
+		_ = vorbis.Add(flacvorbis.FIELD_ARTIST, tagData.Artist)
+	}
+	if tagData.Album != "" {
+		_ = vorbis.Add(flacvorbis.FIELD_ALBUM, tagData.Album)
+	}
+	if tagData.AlbumArtist != "" {
+		_ = vorbis.Add("ALBUMARTIST", tagData.AlbumArtist)
+	}
+	if tagData.Year != "" {
+		_ = vorbis.Add("DATE", tagData.Year)
+	}
+	if tagData.TrackNumber > 0 {
+		_ = vorbis.Add("TRACKNUMBER", fmt.Sprintf("%d", tagData.TrackNumber))
+	}
+	if tagData.DiscNumber > 0 {
+		_ = vorbis.Add("DISCNUMBER", fmt.Sprintf("%d", tagData.DiscNumber))
+	}
+	if tagData.Genre != "" {
+		_ = vorbis.Add("GENRE", tagData.Genre)
+	}
+	if tagData.Comment != "" {
+		_ = vorbis.Add("COMMENT", tagData.Comment)
+	}
+	if tagData.Lyrics != "" {
+		_ = vorbis.Add("LYRICS", tagData.Lyrics)
+		if s.logger != nil {
+			s.logger.Info("embedded flac lyrics with marker", "lyrics_length", len(tagData.Lyrics))
+		}
+	} else if s.logger != nil {
+		s.logger.Warn("flac lyrics field is empty, skipping lyrics embedding")
+	}
+
+	key163 := marker.Create163KeyStr(markerData)
+	_ = vorbis.Add(flacvorbis.FIELD_DESCRIPTION, key163)
+	if s.logger != nil {
+		s.logger.Info("embedded 163key marker in flac", "key_length", len(key163))
 	}
 
 	meta := vorbis.Marshal()
@@ -306,4 +420,95 @@ func readCoverWithLimit(path string, maxSize int64) ([]byte, error) {
 		return nil, fmt.Errorf("cover image too large: %d bytes (max %d)", stat.Size(), maxSize)
 	}
 	return os.ReadFile(path)
+}
+
+func (s *ID3Service) embedMp3TagsWithMarker(audioPath string, tagData *TagData, coverPath string, markerData marker.MarkerData) error {
+	meta, err := id3v2.Open(audioPath, id3v2.Options{Parse: true})
+	if err != nil {
+		return err
+	}
+	defer meta.Close()
+
+	meta.SetDefaultEncoding(id3v2.EncodingUTF8)
+
+	// Set basic tags
+	if tagData.Title != "" {
+		meta.SetTitle(tagData.Title)
+	}
+	if tagData.Artist != "" {
+		meta.SetArtist(tagData.Artist)
+	}
+	if tagData.Album != "" {
+		meta.SetAlbum(tagData.Album)
+	}
+	if tagData.AlbumArtist != "" {
+		meta.AddTextFrame("TPE2", id3v2.EncodingUTF8, tagData.AlbumArtist)
+	}
+	if tagData.Year != "" {
+		meta.AddTextFrame("TDRC", id3v2.EncodingUTF8, tagData.Year)
+	}
+	if tagData.TrackNumber > 0 {
+		meta.AddTextFrame("TRCK", id3v2.EncodingUTF8, fmt.Sprintf("%d", tagData.TrackNumber))
+	}
+	if tagData.DiscNumber > 0 {
+		meta.AddTextFrame("TPOS", id3v2.EncodingUTF8, fmt.Sprintf("%d", tagData.DiscNumber))
+	}
+	if tagData.Genre != "" {
+		meta.SetGenre(tagData.Genre)
+	}
+	if tagData.Comment != "" {
+		meta.AddCommentFrame(id3v2.CommentFrame{
+			Encoding: id3v2.EncodingUTF8,
+			Language: "eng",
+			Text:     tagData.Comment,
+		})
+	}
+
+	// Add lyrics
+	if tagData.Lyrics != "" {
+		meta.AddUnsynchronisedLyricsFrame(id3v2.UnsynchronisedLyricsFrame{
+			Encoding:          id3v2.EncodingUTF8,
+			Language:          "und",
+			ContentDescriptor: "LRC",
+			Lyrics:            tagData.Lyrics,
+		})
+		if s.logger != nil {
+			s.logger.Info("embedded mp3 lyrics with marker", "lyrics_length", len(tagData.Lyrics))
+		}
+	} else if s.logger != nil {
+		s.logger.Warn("mp3 lyrics field is empty, skipping lyrics embedding")
+	}
+
+	// Add 163key in comment frame
+	key163 := marker.Create163KeyStr(markerData)
+	comment := id3v2.CommentFrame{
+		Encoding:    id3v2.EncodingISO,
+		Language:    "chs",
+		Description: "",
+		Text:        key163,
+	}
+	meta.AddCommentFrame(comment)
+	if s.logger != nil {
+		s.logger.Info("embedded 163key marker in mp3", "key_length", len(key163))
+	}
+
+	// Add cover image
+	if coverPath != "" {
+		artwork, err := readCoverWithLimit(coverPath, 10*1024*1024)
+		if err == nil && len(artwork) > 0 {
+			mime := http.DetectContentType(artwork[:minInt(len(artwork), 32)])
+			pic := id3v2.PictureFrame{
+				Encoding:    id3v2.EncodingISO,
+				MimeType:    mime,
+				PictureType: id3v2.PTFrontCover,
+				Description: "Front cover",
+				Picture:     artwork,
+			}
+			meta.AddAttachedPicture(pic)
+		} else if err != nil && s.logger != nil {
+			s.logger.Warn("failed to read cover for mp3 embedding", "error", err)
+		}
+	}
+
+	return meta.Save()
 }
