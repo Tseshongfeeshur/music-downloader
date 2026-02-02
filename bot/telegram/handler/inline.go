@@ -14,11 +14,12 @@ import (
 
 // InlineSearchHandler handles inline queries.
 type InlineSearchHandler struct {
-	Repo            botpkg.SongRepository
-	PlatformManager platform.Manager
-	BotName         string
-	DefaultPlatform string
-	DefaultQuality  string
+	Repo             botpkg.SongRepository
+	PlatformManager  platform.Manager
+	BotName          string
+	DefaultPlatform  string
+	DefaultQuality   string
+	FallbackPlatform string
 }
 
 func (h *InlineSearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -33,6 +34,13 @@ func (h *InlineSearchHandler) Handle(ctx context.Context, b *bot.Bot, update *mo
 	case strings.Contains(query.Query, "search"):
 		h.inlineSearch(ctx, b, query)
 	default:
+		if h.PlatformManager != nil {
+			platformName, trackID, matched := h.PlatformManager.MatchURL(query.Query)
+			if matched {
+				h.inlineCommand(ctx, b, query, platformName, trackID)
+				return
+			}
+		}
 		musicID := parseMusicID(query.Query)
 		if musicID != 0 {
 			h.inlineMusic(ctx, b, query, musicID)
@@ -53,10 +61,41 @@ func (h *InlineSearchHandler) inlineMusic(ctx context.Context, b *bot.Bot, query
 		if strings.TrimSpace(platformName) == "" {
 			platformName = h.DefaultPlatform
 		}
-		keyboard := &models.InlineKeyboardMarkup{InlineKeyboard: [][]models.InlineKeyboardButton{
-			{{Text: fmt.Sprintf("%s- %s", info.SongName, info.SongArtists), URL: fmt.Sprintf("https://music.163.com/song?id=%d", info.MusicID)}},
-			{{Text: sendMeTo, SwitchInlineQuery: fmt.Sprintf("https://music.163.com/song?id=%d", info.MusicID)}},
-		}}
+		qualityValue := info.Quality
+		if strings.TrimSpace(qualityValue) == "" {
+			qualityValue = h.DefaultQuality
+		}
+		if strings.TrimSpace(qualityValue) == "" {
+			qualityValue = "hires"
+		}
+		trackID := info.TrackID
+		if strings.TrimSpace(trackID) == "" && platformName == "netease" && info.MusicID != 0 {
+			trackID = fmt.Sprintf("%d", info.MusicID)
+		}
+		commandQuery := ""
+		if trackID != "" {
+			commandQuery = fmt.Sprintf("/%s %s %s", platformName, trackID, qualityValue)
+		}
+
+		var rows [][]models.InlineKeyboardButton
+		linkURL := strings.TrimSpace(info.TrackURL)
+		if linkURL == "" && platformName == "netease" && info.MusicID != 0 {
+			linkURL = fmt.Sprintf("https://music.163.com/song?id=%d", info.MusicID)
+		}
+		if linkURL != "" {
+			rows = append(rows, []models.InlineKeyboardButton{
+				{Text: fmt.Sprintf("%s- %s", info.SongName, info.SongArtists), URL: linkURL},
+			})
+		}
+		if commandQuery != "" {
+			rows = append(rows, []models.InlineKeyboardButton{
+				{Text: sendMeTo, SwitchInlineQuery: commandQuery},
+			})
+		}
+		var keyboard *models.InlineKeyboardMarkup
+		if len(rows) > 0 {
+			keyboard = &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+		}
 
 		newAudio := &models.InlineQueryResultCachedDocument{
 			ID:             query.ID,
@@ -159,6 +198,10 @@ func (h *InlineSearchHandler) inlineSearch(ctx context.Context, b *bot.Bot, quer
 	if strings.TrimSpace(qualityValue) == "" {
 		qualityValue = "hires"
 	}
+	fallbackPlatform := h.FallbackPlatform
+	if strings.TrimSpace(fallbackPlatform) == "" {
+		fallbackPlatform = "netease"
+	}
 	if h.Repo != nil {
 		if settings, err := h.Repo.GetUserSettings(ctx, query.From.ID); err == nil && settings != nil {
 			platformName = settings.DefaultPlatform
@@ -173,6 +216,18 @@ func (h *InlineSearchHandler) inlineSearch(ctx context.Context, b *bot.Bot, quer
 	}
 
 	tracks, err := plat.Search(ctx, keyWord, 10)
+	if (err != nil || len(tracks) == 0) && fallbackPlatform != "" && fallbackPlatform != platformName {
+		fallbackPlat := h.PlatformManager.Get(fallbackPlatform)
+		if fallbackPlat != nil && fallbackPlat.SupportsSearch() {
+			fallbackTracks, fallbackErr := fallbackPlat.Search(ctx, keyWord, 10)
+			if fallbackErr == nil && len(fallbackTracks) > 0 {
+				platformName = fallbackPlatform
+				plat = fallbackPlat
+				tracks = fallbackTracks
+				err = nil
+			}
+		}
+	}
 	if err != nil || len(tracks) == 0 {
 		inlineMsg := &models.InlineQueryResultArticle{
 			ID:                  fmt.Sprintf("%d", time.Now().UnixMicro()),
@@ -211,5 +266,35 @@ func (h *InlineSearchHandler) inlineSearch(ctx context.Context, b *bot.Bot, quer
 		IsPersonal:    false,
 		Results:       inlineMsgs,
 		CacheTime:     3600,
+	})
+}
+
+func (h *InlineSearchHandler) inlineCommand(ctx context.Context, b *bot.Bot, query *models.InlineQuery, platformName, trackID string) {
+	if strings.TrimSpace(platformName) == "" || strings.TrimSpace(trackID) == "" {
+		h.inlineEmpty(ctx, b, query)
+		return
+	}
+	qualityValue := h.DefaultQuality
+	if h.Repo != nil {
+		if settings, err := h.Repo.GetUserSettings(ctx, query.From.ID); err == nil && settings != nil {
+			if strings.TrimSpace(settings.DefaultQuality) != "" {
+				qualityValue = settings.DefaultQuality
+			}
+		}
+	}
+	if strings.TrimSpace(qualityValue) == "" {
+		qualityValue = "hires"
+	}
+	inlineMsg := &models.InlineQueryResultArticle{
+		ID:                  fmt.Sprintf("%d", time.Now().UnixMicro()),
+		Title:               fmt.Sprintf("%s %s", platformEmoji(platformName), platformDisplayName(platformName)),
+		Description:         tapToDownload,
+		InputMessageContent: &models.InputTextMessageContent{MessageText: fmt.Sprintf("/%s %s %s", platformName, trackID, qualityValue)},
+	}
+	_, _ = b.AnswerInlineQuery(ctx, &bot.AnswerInlineQueryParams{
+		InlineQueryID: query.ID,
+		IsPersonal:    false,
+		Results:       []models.InlineQueryResult{inlineMsg},
+		CacheTime:     60,
 	})
 }

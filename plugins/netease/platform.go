@@ -232,6 +232,7 @@ func (n *NeteasePlatform) convertSongDetailToTrack(song bot.SongDetail) platform
 			ID:       strconv.Itoa(ar.Id),
 			Platform: "netease",
 			Name:     ar.Name,
+			URL:      fmt.Sprintf("https://music.163.com/artist?id=%d", ar.Id),
 		})
 	}
 
@@ -244,6 +245,7 @@ func (n *NeteasePlatform) convertSongDetailToTrack(song bot.SongDetail) platform
 			Title:    songData.Al.Name,
 			CoverURL: songData.Al.PicUrl,
 			Artists:  artists,
+			URL:      fmt.Sprintf("https://music.163.com/album?id=%d", songData.Al.Id),
 		}
 	}
 
@@ -316,6 +318,7 @@ func (n *NeteasePlatform) convertSearchSongToTrack(song struct {
 			ID:       strconv.Itoa(ar.Id),
 			Platform: "netease",
 			Name:     ar.Name,
+			URL:      fmt.Sprintf("https://music.163.com/artist?id=%d", ar.Id),
 		})
 	}
 
@@ -328,6 +331,7 @@ func (n *NeteasePlatform) convertSearchSongToTrack(song struct {
 			Title:    song.Album.Name,
 			CoverURL: fmt.Sprintf("https://p4.music.126.net/%d/%d.jpg", song.Album.PicId, song.Album.PicId),
 			Artists:  artists,
+			URL:      fmt.Sprintf("https://music.163.com/album?id=%d", song.Album.Id),
 		}
 
 		// Set release date if available

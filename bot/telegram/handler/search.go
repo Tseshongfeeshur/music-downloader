@@ -210,19 +210,16 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 		track := tracks[i]
 		escapedTitle := mdV2Replacer.Replace(track.Title)
 
-		var trackLink string
-		if platformName == "netease" && track.ID != "" {
-			trackLink = fmt.Sprintf("[%s](https://music.163.com/song?id=%s)", escapedTitle, track.ID)
-		} else {
-			trackLink = escapedTitle
+		trackLink := escapedTitle
+		if strings.TrimSpace(track.URL) != "" {
+			trackLink = fmt.Sprintf("[%s](%s)", escapedTitle, track.URL)
 		}
 
 		var artistParts []string
 		for _, artist := range track.Artists {
 			escapedArtist := mdV2Replacer.Replace(artist.Name)
-			if platformName == "netease" && artist.ID != "" {
-				artistLink := fmt.Sprintf("[%s](https://music.163.com/artist?id=%s)", escapedArtist, artist.ID)
-				artistParts = append(artistParts, artistLink)
+			if strings.TrimSpace(artist.URL) != "" {
+				artistParts = append(artistParts, fmt.Sprintf("[%s](%s)", escapedArtist, artist.URL))
 			} else {
 				artistParts = append(artistParts, escapedArtist)
 			}

@@ -43,6 +43,36 @@ func (r *Router) Register(b *bot.Bot, botName string) {
 		if update.Message == nil || update.Message.Text == "" {
 			return false
 		}
+		text := strings.TrimSpace(update.Message.Text)
+		if !strings.HasPrefix(text, "/") {
+			return false
+		}
+		parts := strings.SplitN(text, " ", 2)
+		command := strings.TrimPrefix(parts[0], "/")
+		if command == "" {
+			return false
+		}
+		if strings.Contains(command, "@") {
+			seg := strings.SplitN(command, "@", 2)
+			command = seg[0]
+			if len(seg) > 1 && seg[1] != "" && seg[1] != botName {
+				return false
+			}
+		}
+
+		if isReservedCommand(command) {
+			return false
+		}
+		if r.PlatformManager == nil {
+			return false
+		}
+		return r.PlatformManager.Get(command) != nil
+	}, r.wrapMessage(r.Music))
+
+	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+		if update.Message == nil || update.Message.Text == "" {
+			return false
+		}
 		// Use PlatformManager for dynamic URL matching if available
 		if r.PlatformManager != nil {
 			_, _, matched := r.PlatformManager.MatchURL(update.Message.Text)
@@ -144,6 +174,15 @@ func matchCommandFunc(botName, cmd string) func(update *models.Update) bool {
 		if botName != "" && command == cmd+"@"+botName {
 			return true
 		}
+		return false
+	}
+}
+
+func isReservedCommand(command string) bool {
+	switch command {
+	case "start", "music", "netease", "program", "search", "lyric", "recognize", "about", "status", "settings", "rmcache":
+		return true
+	default:
 		return false
 	}
 }
