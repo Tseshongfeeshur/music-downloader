@@ -1,0 +1,36 @@
+package netease
+
+import (
+	"fmt"
+
+	"github.com/liuran001/MusicBot-Go/bot/config"
+	logpkg "github.com/liuran001/MusicBot-Go/bot/logger"
+	platformplugins "github.com/liuran001/MusicBot-Go/bot/platform/plugins"
+)
+
+func init() {
+	if err := platformplugins.Register("netease", buildContribution); err != nil {
+		panic(err)
+	}
+}
+
+func buildContribution(cfg *config.Config, logger *logpkg.Logger) (*platformplugins.Contribution, error) {
+	if cfg == nil {
+		return nil, fmt.Errorf("config required")
+	}
+	musicU := cfg.GetPluginString("netease", "music_u")
+	if musicU == "" {
+		musicU = cfg.GetString("MUSIC_U")
+	}
+	client := New(musicU, logger)
+	platform := NewPlatform(client)
+	id3Provider := NewID3Provider(client)
+	recognizeService := NewRecognizeService(cfg.GetInt("RecognizePort"))
+	recognizer := NewRecognizer(recognizeService)
+
+	return &platformplugins.Contribution{
+		Platform:   platform,
+		ID3:        id3Provider,
+		Recognizer: recognizer,
+	}, nil
+}
