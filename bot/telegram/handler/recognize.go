@@ -14,8 +14,8 @@ import (
 	"github.com/go-telegram/bot"
 	"github.com/go-telegram/bot/models"
 	logpkg "github.com/liuran001/MusicBot-Go/bot/logger"
+	"github.com/liuran001/MusicBot-Go/bot/recognize"
 	"github.com/liuran001/MusicBot-Go/bot/telegram"
-	"github.com/liuran001/MusicBot-Go/plugins/netease"
 )
 
 // RecognizeHandler handles voice recognition.
@@ -23,7 +23,7 @@ type RecognizeHandler struct {
 	CacheDir         string
 	Music            *MusicHandler
 	RateLimiter      *telegram.RateLimiter
-	RecognizeService *netease.RecognizeService
+	RecognizeService recognize.Service
 	Logger           *logpkg.Logger
 }
 
@@ -103,11 +103,7 @@ func (h *RecognizeHandler) Handle(ctx context.Context, b *bot.Bot, update *model
 		return
 	}
 
-	if h.Logger != nil {
-		h.Logger.Debug("recognition result", "code", result.Code, "has_data", result.Data != nil)
-	}
-
-	if result.Data == nil || len(result.Data.Result) == 0 {
+	if result == nil || result.TrackID == "" || result.Platform == "" {
 		if h.Logger != nil {
 			h.Logger.Info("recognition returned no results")
 		}
@@ -115,20 +111,25 @@ func (h *RecognizeHandler) Handle(ctx context.Context, b *bot.Bot, update *model
 		return
 	}
 
-	musicID := result.Data.Result[0].Song.ID
-	params := &bot.SendMessageParams{
-		ChatID:          chatID,
-		Text:            fmt.Sprintf("https://music.163.com/song/%d", musicID),
-		ReplyParameters: &models.ReplyParameters{MessageID: replyID},
+	if h.Logger != nil {
+		h.Logger.Debug("recognition result", "platform", result.Platform, "track_id", result.TrackID)
 	}
-	if h.RateLimiter != nil {
-		_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)
-	} else {
-		_, _ = b.SendMessage(ctx, params)
+
+	if result.URL != "" {
+		params := &bot.SendMessageParams{
+			ChatID:          chatID,
+			Text:            result.URL,
+			ReplyParameters: &models.ReplyParameters{MessageID: replyID},
+		}
+		if h.RateLimiter != nil {
+			_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)
+		} else {
+			_, _ = b.SendMessage(ctx, params)
+		}
 	}
 
 	if h.Music != nil {
-		h.Music.dispatch(ctx, b, message.ReplyToMessage, "netease", fmt.Sprintf("%d", musicID), "")
+		h.Music.dispatch(ctx, b, message.ReplyToMessage, result.Platform, result.TrackID, "")
 	}
 }
 
