@@ -3,6 +3,7 @@ package config
 import (
 	"fmt"
 	"path/filepath"
+	"sort"
 	"strconv"
 	"strings"
 
@@ -104,6 +105,19 @@ func (c *Config) GetIntSlice(key string) []int {
 func (c *Config) GetPluginConfig(name string) (PluginConfig, bool) {
 	cfg, ok := c.plugins[name]
 	return cfg, ok
+}
+
+// PluginNames returns the configured plugin names.
+func (c *Config) PluginNames() []string {
+	if len(c.plugins) == 0 {
+		return nil
+	}
+	nameList := make([]string, 0, len(c.plugins))
+	for name := range c.plugins {
+		nameList = append(nameList, name)
+	}
+	sort.Strings(nameList)
+	return nameList
 }
 
 // GetPluginString returns a string value from plugin configuration.
