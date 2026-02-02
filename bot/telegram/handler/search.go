@@ -15,10 +15,11 @@ import (
 
 // SearchHandler handles /search and private message search.
 type SearchHandler struct {
-	PlatformManager platform.Manager
-	Repo            botpkg.SongRepository
-	RateLimiter     *telegram.RateLimiter
-	DefaultPlatform string
+	PlatformManager  platform.Manager
+	Repo             botpkg.SongRepository
+	RateLimiter      *telegram.RateLimiter
+	DefaultPlatform  string
+	FallbackPlatform string
 }
 
 func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -77,6 +78,10 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 	if platformName == "" {
 		platformName = "netease"
 	}
+	fallbackPlatform := h.FallbackPlatform
+	if fallbackPlatform == "" {
+		fallbackPlatform = "netease"
+	}
 	if h.Repo != nil {
 		if message.Chat.Type != "private" {
 			if settings, err := h.Repo.GetGroupSettings(ctx, message.Chat.ID); err == nil && settings != nil {
@@ -130,12 +135,12 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 	tracks, err := plat.Search(ctx, keyword, 10)
 	usedFallback := false
 	if err != nil {
-		if platformName != "netease" {
-			fallbackPlat := h.PlatformManager.Get("netease")
+		if fallbackPlatform != "" && platformName != fallbackPlatform {
+			fallbackPlat := h.PlatformManager.Get(fallbackPlatform)
 			if fallbackPlat != nil && fallbackPlat.SupportsSearch() {
 				tracks, err = fallbackPlat.Search(ctx, keyword, 10)
 				if err == nil && len(tracks) > 0 {
-					platformName = "netease"
+					platformName = fallbackPlatform
 					plat = fallbackPlat
 					usedFallback = true
 				}
@@ -182,18 +187,14 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 	var buttons []models.InlineKeyboardButton
 	var textMessage strings.Builder
 
-	platformEmoji := "🎵"
-	platformDisplayName := "网易云音乐"
-	if platformName == "netease" {
-		platformEmoji = "🎵"
-		platformDisplayName = "网易云音乐"
-	}
+	platformEmoji := platformEmoji(platformName)
+	displayName := platformDisplayName(platformName)
 
 	if usedFallback {
-		textMessage.WriteString("⚠️ 默认平台搜索失败，已切换到网易云\n\n")
+		textMessage.WriteString(fmt.Sprintf("⚠️ 默认平台搜索失败，已切换到%s\n\n", displayName))
 	}
 
-	textMessage.WriteString(fmt.Sprintf("%s *%s* 搜索结果\n\n", platformEmoji, mdV2Replacer.Replace(platformDisplayName)))
+	textMessage.WriteString(fmt.Sprintf("%s *%s* 搜索结果\n\n", platformEmoji, mdV2Replacer.Replace(displayName)))
 
 	requesterID := int64(0)
 	if message.From != nil {

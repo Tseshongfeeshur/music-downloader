@@ -298,6 +298,32 @@ func buildMusicCaption(songInfo *botpkg.SongInfo, botName string) string {
 	)
 }
 
+func platformEmoji(platformName string) string {
+	switch platformName {
+	case "netease":
+		return "🎵"
+	case "spotify":
+		return "🎧"
+	case "qqmusic":
+		return "🎶"
+	default:
+		return "🎵"
+	}
+}
+
+func platformDisplayName(platformName string) string {
+	switch platformName {
+	case "netease":
+		return "网易云音乐"
+	case "spotify":
+		return "Spotify"
+	case "qqmusic":
+		return "QQ音乐"
+	default:
+		return platformName
+	}
+}
+
 func fillSongInfoFromTrack(songInfo *botpkg.SongInfo, track *platform.Track, platformName, trackID string, message *models.Message) {
 	songInfo.Platform = platformName
 	songInfo.TrackID = trackID
