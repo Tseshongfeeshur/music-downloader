@@ -53,7 +53,7 @@ main.go
        └─> app.Start()            # 启动应用
             ├─> 加载配置
             ├─> 初始化数据库
-            ├─> 注册平台插件
+             ├─> 加载插件注册表并注册平台
             ├─> 创建 Telegram Bot
             ├─> 注册命令处理器
             └─> 启动 Bot 轮询
@@ -81,6 +81,7 @@ Telegram Update
 ```
 Handler
   └─> PlatformManager
+       ├─> Plugins Registry (init 注册工厂)
        ├─> Registry.GetPlatform("netease")
        ├─> Registry.MatchURL(url)
        └─> Platform Interface
@@ -226,7 +227,7 @@ CREATE TABLE user_settings (
 1. **创建插件目录**: `plugins/<platform>/`
 2. **实现 Platform 接口**: 参考 `plugins/netease/platform.go`
 3. **实现 URLMatcher** (可选): 用于 URL 识别
-4. **注册插件**: 在 `bot/app/app.go` 中注册
+4. **注册插件**: 在插件包内注册工厂，并在 `plugins/all` 添加空白导入
 
 详见 `PLUGIN_GUIDE.md`。
 

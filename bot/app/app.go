@@ -14,10 +14,11 @@ import (
 	"github.com/liuran001/MusicBot-Go/bot/id3"
 	logpkg "github.com/liuran001/MusicBot-Go/bot/logger"
 	"github.com/liuran001/MusicBot-Go/bot/platform"
+	platformplugins "github.com/liuran001/MusicBot-Go/bot/platform/plugins"
+	"github.com/liuran001/MusicBot-Go/bot/recognize"
 	"github.com/liuran001/MusicBot-Go/bot/telegram"
 	"github.com/liuran001/MusicBot-Go/bot/telegram/handler"
 	"github.com/liuran001/MusicBot-Go/bot/worker"
-	"github.com/liuran001/MusicBot-Go/plugins/netease"
 	gormlogger "gorm.io/gorm/logger"
 )
 
@@ -27,10 +28,10 @@ type App struct {
 	Logger           *logpkg.Logger
 	DB               *db.Repository
 	Pool             *worker.Pool
-	Netease          *netease.Client
 	PlatformManager  platform.Manager
 	Telegram         *telegram.Bot
-	RecognizeService *netease.RecognizeService
+	RecognizeService recognize.Service
+	TagProviders     map[string]id3.ID3TagProvider
 	Build            BuildInfo
 }
 
@@ -70,32 +71,74 @@ func New(ctx context.Context, configPath string, build BuildInfo) (*App, error) 
 	poolSize := conf.GetInt("WorkerPoolSize")
 	pool := worker.New(poolSize)
 
-	musicU := conf.GetPluginString("netease", "music_u")
-	if musicU == "" {
-		musicU = conf.GetString("MUSIC_U")
-	}
-	neteaseClient := netease.New(musicU, log)
-
 	platformManager := platform.NewManager()
-	neteasePlatformInstance := netease.NewPlatform(neteaseClient)
-	platformManager.Register(neteasePlatformInstance)
+	pluginTagProviders := make(map[string]id3.ID3TagProvider)
+	var recognizeService recognize.Service
+	pluginNames := conf.PluginNames()
+	if len(pluginNames) == 0 {
+		pluginNames = platformplugins.Names()
+	}
+	for _, name := range pluginNames {
+		enabled := true
+		if pluginCfg, ok := conf.GetPluginConfig(name); ok {
+			if _, hasKey := pluginCfg["enabled"]; hasKey {
+				enabled = conf.GetPluginBool(name, "enabled")
+			}
+		}
+		if !enabled {
+			if log != nil {
+				log.Info("plugin disabled by config", "plugin", name)
+			}
+			continue
+		}
+
+		factory, ok := platformplugins.Get(name)
+		if !ok {
+			if log != nil {
+				log.Warn("plugin not registered", "plugin", name)
+			}
+			continue
+		}
+
+		contrib, err := factory(conf, log)
+		if err != nil {
+			if log != nil {
+				log.Error("plugin init failed", "plugin", name, "error", err)
+			}
+			continue
+		}
+		if contrib == nil {
+			continue
+		}
+		if contrib.Platform != nil {
+			platformManager.Register(contrib.Platform)
+			if contrib.ID3 != nil {
+				pluginTagProviders[contrib.Platform.Name()] = contrib.ID3
+			}
+		}
+		if contrib.Recognizer != nil {
+			if recognizeService == nil {
+				recognizeService = contrib.Recognizer
+			} else if log != nil {
+				log.Warn("multiple recognizers configured; ignoring extra", "plugin", name)
+			}
+		}
+	}
 
 	tele, err := telegram.New(conf, log)
 	if err != nil {
 		return nil, fmt.Errorf("init telegram: %w", err)
 	}
 
-	recognizeService := netease.NewRecognizeService(conf.GetInt("RecognizePort"))
-
 	return &App{
 		Config:           conf,
 		Logger:           log,
 		DB:               repo,
 		Pool:             pool,
-		Netease:          neteaseClient,
 		PlatformManager:  platformManager,
 		Telegram:         tele,
 		RecognizeService: recognizeService,
+		TagProviders:     pluginTagProviders,
 		Build:            build,
 	}, nil
 }
@@ -144,10 +187,7 @@ func (a *App) Start(ctx context.Context) error {
 	})
 	id3Service := id3.NewID3Service(a.Logger)
 
-	tagProviders := map[string]id3.ID3TagProvider{}
-	if a.Netease != nil {
-		tagProviders["netease"] = netease.NewID3Provider(a.Netease)
-	}
+	tagProviders := a.TagProviders
 
 	rateLimitPerSecond := a.Config.GetFloat64("RateLimitPerSecond")
 	if rateLimitPerSecond <= 0 {

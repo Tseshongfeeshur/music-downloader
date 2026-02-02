@@ -11,6 +11,7 @@ import (
 	"time"
 
 	"github.com/liuran001/MusicBot-Go/bot/app"
+	_ "github.com/liuran001/MusicBot-Go/plugins/all"
 )
 
 var (

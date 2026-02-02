@@ -39,7 +39,7 @@ MusicBot-Go 使用基于接口的插件系统，允许轻松扩展对不同音�
 2. **实现 `Platform` 接口**: 在该目录下创建 `platform.go`。
 3. **实现 `URLMatcher` 接口** (可选但推荐): 允许 Bot 识别该平台的 URL。
 4. **编写测试**: 确保插件逻辑正确。
-5. **注册插件**: 在 `bot/app/app.go` 中初始化并注册。
+5. **注册插件**: 在插件包内通过工厂注册，并在 `plugins/all` 中进行空白导入。
 
 ### 最小可行插件
 
@@ -328,30 +328,43 @@ func TestURLMatcher(t *testing.T) {
 
 ### 1. 注册插件
 
-在 `internal/app/app.go` 的 `New` 函数中初始化并注册你的插件：
+在插件包内注册工厂，并在 `plugins/all` 中添加空白导入。示例：
 
 ```go
-// internal/app/app.go
+// plugins/spotify/register.go
+package spotify
 
-import "github.com/liuran001/MusicBot-Go/bot/platform/spotify"
+import (
+    "github.com/liuran001/MusicBot-Go/bot/config"
+    logpkg "github.com/liuran001/MusicBot-Go/bot/logger"
+    platformplugins "github.com/liuran001/MusicBot-Go/bot/platform/plugins"
+)
 
-func New(ctx context.Context, configPath string, build BuildInfo) (*App, error) {
-    // ... 现有初始化代码 ...
-    
-    // 初始化 Spotify 插件
-    spotifyClient := spotify.NewClient(conf.GetString("SPOTIFY_ID"), conf.GetString("SPOTIFY_SECRET"))
-    spotifyPlatform := spotify.New(spotifyClient)
-    
-    // 注册到 PlatformManager
-    platformManager.Register(spotifyPlatform)
-    
-    // ...
+func init() {
+    if err := platformplugins.Register("spotify", buildContribution); err != nil {
+        panic(err)
+    }
 }
+
+func buildContribution(cfg *config.Config, logger *logpkg.Logger) (*platformplugins.Contribution, error) {
+    client := NewClient(cfg.GetString("SPOTIFY_ID"), cfg.GetString("SPOTIFY_SECRET"))
+    platform := NewPlatform(client)
+    return &platformplugins.Contribution{Platform: platform}, nil
+}
+```
+
+```go
+// plugins/all/all.go
+package all
+
+import (
+    _ "github.com/liuran001/MusicBot-Go/plugins/spotify"
+)
 ```
 
 ### 2. 添加配置
 
-在 `config.ini` 中添加插件所需的配置项，并在 `internal/config/config.go` 中确保它们能被正确读取。
+在 `config.ini` 中添加插件所需的配置项，并在 `bot/config/config.go` 中确保它们能被正确读取。
 
 ---
 
