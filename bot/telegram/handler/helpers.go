@@ -257,32 +257,27 @@ func buildMusicCaption(songInfo *botpkg.SongInfo, botName string) string {
 	albumHTML := songInfo.SongAlbum
 	platformTag := "#" + platformTag(songInfo.Platform)
 
-	if songInfo.Platform == "netease" || songInfo.Platform == "" {
-		if songInfo.MusicID != 0 {
-			songNameHTML = fmt.Sprintf("<a href=\"https://music.163.com/song?id=%d\">%s</a>", songInfo.MusicID, songInfo.SongName)
-		}
+	if strings.TrimSpace(songInfo.TrackURL) != "" {
+		songNameHTML = fmt.Sprintf("<a href=\"%s\">%s</a>", songInfo.TrackURL, songInfo.SongName)
+	}
 
-		if songInfo.SongArtistsIDs != "" {
-			artistIDs := strings.Split(songInfo.SongArtistsIDs, ",")
-			artists := strings.Split(songInfo.SongArtists, "/")
-			var parts []string
-			for i, artist := range artists {
-				artist = strings.TrimSpace(artist)
-				if i < len(artistIDs) {
-					if id, err := strconv.ParseInt(artistIDs[i], 10, 64); err == nil && id > 0 {
-						parts = append(parts, fmt.Sprintf("<a href=\"https://music.163.com/artist?id=%d\">%s</a>", id, artist))
-						continue
-					}
-				}
-				parts = append(parts, artist)
+	if strings.TrimSpace(songInfo.SongArtistsURLs) != "" {
+		artistURLs := strings.Split(songInfo.SongArtistsURLs, ",")
+		artists := strings.Split(songInfo.SongArtists, "/")
+		var parts []string
+		for i, artist := range artists {
+			artist = strings.TrimSpace(artist)
+			if i < len(artistURLs) && strings.TrimSpace(artistURLs[i]) != "" {
+				parts = append(parts, fmt.Sprintf("<a href=\"%s\">%s</a>", strings.TrimSpace(artistURLs[i]), artist))
+				continue
 			}
-			artistsHTML = strings.Join(parts, " / ")
+			parts = append(parts, artist)
 		}
+		artistsHTML = strings.Join(parts, " / ")
+	}
 
-		if songInfo.AlbumID > 0 {
-			albumHTML = fmt.Sprintf("<a href=\"https://music.163.com/album?id=%d\">%s</a>", songInfo.AlbumID, songInfo.SongAlbum)
-		}
-
+	if strings.TrimSpace(songInfo.AlbumURL) != "" {
+		albumHTML = fmt.Sprintf("<a href=\"%s\">%s</a>", songInfo.AlbumURL, songInfo.SongAlbum)
 	}
 
 	return fmt.Sprintf("<b>「%s」- %s</b>\n专辑: %s\n<blockquote>%.2fMB %.2fkbps\n%s #%s\n</blockquote>via @%s",
@@ -347,20 +342,31 @@ func fillSongInfoFromTrack(songInfo *botpkg.SongInfo, track *platform.Track, pla
 
 	artistNames := make([]string, 0, len(track.Artists))
 	artistIDs := make([]string, 0, len(track.Artists))
+	artistURLs := make([]string, 0, len(track.Artists))
 	for _, artist := range track.Artists {
 		artistNames = append(artistNames, artist.Name)
 		artistIDs = append(artistIDs, artist.ID)
+		if strings.TrimSpace(artist.URL) != "" {
+			artistURLs = append(artistURLs, artist.URL)
+		} else {
+			artistURLs = append(artistURLs, "")
+		}
 	}
 	songInfo.SongArtists = strings.Join(artistNames, "/")
 	songInfo.SongArtistsIDs = strings.Join(artistIDs, ",")
+	songInfo.SongArtistsURLs = strings.Join(artistURLs, ",")
 
 	if track.Album != nil {
 		songInfo.SongAlbum = track.Album.Title
-		if platformName == "netease" {
-			if id, err := strconv.Atoi(track.Album.ID); err == nil {
-				songInfo.AlbumID = id
-			}
+		if strings.TrimSpace(track.Album.URL) != "" {
+			songInfo.AlbumURL = track.Album.URL
 		}
+		if id, err := strconv.Atoi(track.Album.ID); err == nil {
+			songInfo.AlbumID = id
+		}
+	}
+	if strings.TrimSpace(track.URL) != "" {
+		songInfo.TrackURL = track.URL
 	}
 
 	if message != nil {
@@ -404,12 +410,20 @@ func (pw *progressWriter) Write(p []byte) (n int, err error) {
 
 		text := fmt.Sprintf("正在下载：%s\n进度：%.2f%% (%.2f MB / %.2f MB)\n速度：%.2f MB/s",
 			pw.filename, progress, downloaded, total, speed)
+		if pw.msg.Text == text {
+			pw.lastUpdate = now
+			pw.lastWritten = pw.written
+			return n, nil
+		}
 
-		_, _ = pw.bot.EditMessageText(pw.ctx, &bot.EditMessageTextParams{
+		_, err = pw.bot.EditMessageText(pw.ctx, &bot.EditMessageTextParams{
 			ChatID:    pw.msg.Chat.ID,
 			MessageID: pw.msg.ID,
 			Text:      text,
 		})
+		if err == nil {
+			pw.msg.Text = text
+		}
 
 		pw.lastUpdate = now
 		pw.lastWritten = pw.written

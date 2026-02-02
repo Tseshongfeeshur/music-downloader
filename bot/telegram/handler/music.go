@@ -910,6 +910,9 @@ func editMessageTextOrSend(ctx context.Context, b *bot.Bot, rateLimiter *telegra
 	if msg == nil {
 		return nil
 	}
+	if msg.Text == text {
+		return msg
+	}
 	editParams := &bot.EditMessageTextParams{
 		ChatID:    msg.Chat.ID,
 		MessageID: msg.ID,
