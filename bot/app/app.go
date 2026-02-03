@@ -3,6 +3,7 @@ package app
 import (
 	"context"
 	"fmt"
+	"strconv"
 	"strings"
 	"time"
 
@@ -11,6 +12,7 @@ import (
 	"github.com/liuran001/MusicBot-Go/bot/config"
 	"github.com/liuran001/MusicBot-Go/bot/db"
 	"github.com/liuran001/MusicBot-Go/bot/download"
+	"github.com/liuran001/MusicBot-Go/bot/dynplugin"
 	"github.com/liuran001/MusicBot-Go/bot/id3"
 	logpkg "github.com/liuran001/MusicBot-Go/bot/logger"
 	"github.com/liuran001/MusicBot-Go/bot/platform"
@@ -25,14 +27,50 @@ import (
 // App wires all application dependencies.
 type App struct {
 	Config           *config.Config
+	ConfigPath       string
 	Logger           *logpkg.Logger
 	DB               *db.Repository
 	Pool             *worker.Pool
 	PlatformManager  platform.Manager
+	DynPlugins       *dynplugin.Manager
+	AdminIDs         map[int64]struct{}
 	Telegram         *telegram.Bot
 	RecognizeService recognize.Service
 	TagProviders     map[string]id3.ID3TagProvider
 	Build            BuildInfo
+}
+
+func registerContribution(
+	platformManager platform.Manager,
+	pluginTagProviders map[string]id3.ID3TagProvider,
+	recognizeService *recognize.Service,
+	contrib *platformplugins.Contribution,
+	log *logpkg.Logger,
+) {
+	if contrib == nil {
+		return
+	}
+	platformsToRegister := contrib.Platforms
+	if len(platformsToRegister) == 0 && contrib.Platform != nil {
+		platformsToRegister = []platform.Platform{contrib.Platform}
+	}
+
+	for _, plat := range platformsToRegister {
+		if plat != nil {
+			platformManager.Register(plat)
+			if contrib.ID3 != nil {
+				pluginTagProviders[plat.Name()] = contrib.ID3
+			}
+		}
+	}
+
+	if contrib.Recognizer != nil {
+		if *recognizeService == nil {
+			*recognizeService = contrib.Recognizer
+		} else if log != nil {
+			log.Warn("multiple recognizers configured; ignoring extra", "plugin", "dynamic")
+		}
+	}
 }
 
 // BuildInfo provides build-time metadata.
@@ -82,6 +120,8 @@ func New(ctx context.Context, configPath string, build BuildInfo) (*App, error) 
 	pool := worker.New(poolSize)
 
 	platformManager := platform.NewManager()
+	dynManager := dynplugin.NewManager(log)
+	adminIDs := parseAdminIDs(conf.GetString("BotAdmin"))
 	pluginTagProviders := make(map[string]id3.ID3TagProvider)
 	var recognizeService recognize.Service
 	pluginNames := conf.PluginNames()
@@ -104,9 +144,6 @@ func New(ctx context.Context, configPath string, build BuildInfo) (*App, error) 
 
 		factory, ok := platformplugins.Get(name)
 		if !ok {
-			if log != nil {
-				log.Warn("plugin not registered", "plugin", name)
-			}
 			continue
 		}
 
@@ -117,30 +154,12 @@ func New(ctx context.Context, configPath string, build BuildInfo) (*App, error) 
 			}
 			continue
 		}
-		if contrib == nil {
-			continue
-		}
+		registerContribution(platformManager, pluginTagProviders, &recognizeService, contrib, log)
+	}
 
-		platformsToRegister := contrib.Platforms
-		if len(platformsToRegister) == 0 && contrib.Platform != nil {
-			platformsToRegister = []platform.Platform{contrib.Platform}
-		}
-
-		for _, plat := range platformsToRegister {
-			if plat != nil {
-				platformManager.Register(plat)
-				if contrib.ID3 != nil {
-					pluginTagProviders[plat.Name()] = contrib.ID3
-				}
-			}
-		}
-
-		if contrib.Recognizer != nil {
-			if recognizeService == nil {
-				recognizeService = contrib.Recognizer
-			} else if log != nil {
-				log.Warn("multiple recognizers configured; ignoring extra", "plugin", name)
-			}
+	if err := dynManager.Load(ctx, conf, platformManager); err != nil {
+		if log != nil {
+			log.Warn("dynamic plugin load failed", "error", err)
 		}
 	}
 
@@ -151,10 +170,13 @@ func New(ctx context.Context, configPath string, build BuildInfo) (*App, error) 
 
 	return &App{
 		Config:           conf,
+		ConfigPath:       configPath,
 		Logger:           log,
 		DB:               repo,
 		Pool:             pool,
 		PlatformManager:  platformManager,
+		DynPlugins:       dynManager,
+		AdminIDs:         adminIDs,
 		Telegram:         tele,
 		RecognizeService: recognizeService,
 		TagProviders:     pluginTagProviders,
@@ -267,6 +289,7 @@ func (a *App) Start(ctx context.Context) error {
 	}
 	searchHandler := &handler.SearchHandler{PlatformManager: a.PlatformManager, Repo: a.DB, RateLimiter: rateLimiter, DefaultPlatform: defaultPlatform, FallbackPlatform: searchFallback}
 	searchCallback := &handler.SearchCallbackHandler{Search: searchHandler, RateLimiter: rateLimiter}
+	reloadHandler := &handler.ReloadHandler{Reload: a.ReloadDynamicPlugins, RateLimiter: rateLimiter, Logger: a.Logger, AdminIDs: a.AdminIDs}
 
 	router := &handler.Router{
 		Music:            musicHandler,
@@ -276,10 +299,11 @@ func (a *App) Start(ctx context.Context) error {
 		About:            &handler.AboutHandler{RuntimeVer: a.Build.RuntimeVer, BinVersion: a.Build.BinVersion, CommitSHA: a.Build.CommitSHA, BuildTime: a.Build.BuildTime, BuildArch: a.Build.BuildArch, RateLimiter: rateLimiter},
 		Status:           &handler.StatusHandler{Repo: a.DB, PlatformManager: a.PlatformManager, RateLimiter: rateLimiter},
 		Settings:         settingsHandler,
-		RmCache:          &handler.RmCacheHandler{Repo: a.DB, PlatformManager: a.PlatformManager, RateLimiter: rateLimiter},
+		RmCache:          &handler.RmCacheHandler{Repo: a.DB, PlatformManager: a.PlatformManager, RateLimiter: rateLimiter, AdminIDs: a.AdminIDs},
 		Callback:         &handler.CallbackMusicHandler{Music: musicHandler, BotName: botName, RateLimiter: rateLimiter},
 		SettingsCallback: &handler.SettingsCallbackHandler{Repo: a.DB, PlatformManager: a.PlatformManager, SettingsHandler: settingsHandler, RateLimiter: rateLimiter},
 		SearchCallback:   searchCallback,
+		Reload:           reloadHandler,
 		Inline:           &handler.InlineSearchHandler{Repo: a.DB, PlatformManager: a.PlatformManager, BotName: botName, DefaultPlatform: defaultPlatform, DefaultQuality: defaultQuality, FallbackPlatform: searchFallback},
 		PlatformManager:  a.PlatformManager,
 	}
@@ -301,6 +325,66 @@ func (a *App) Start(ctx context.Context) error {
 
 	go a.Telegram.Start(ctx)
 	return nil
+}
+
+// ReloadDynamicPlugins reloads script-based plugins from disk.
+func (a *App) ReloadDynamicPlugins(ctx context.Context) error {
+	if a.DynPlugins == nil {
+		return fmt.Errorf("dynamic plugins not configured")
+	}
+	if strings.TrimSpace(a.ConfigPath) == "" {
+		return fmt.Errorf("config path missing")
+	}
+	conf, err := config.Load(a.ConfigPath)
+	if err != nil {
+		return err
+	}
+	a.Config = conf
+	refreshAdminIDs(a.AdminIDs, conf.GetString("BotAdmin"))
+	return a.DynPlugins.Reload(ctx, conf, a.PlatformManager)
+}
+
+func parseAdminIDs(raw string) map[int64]struct{} {
+	ids := make(map[int64]struct{})
+	for _, value := range splitAdminIDs(raw) {
+		if id, err := strconv.ParseInt(value, 10, 64); err == nil {
+			ids[id] = struct{}{}
+		}
+	}
+	return ids
+}
+
+func refreshAdminIDs(dst map[int64]struct{}, raw string) {
+	if dst == nil {
+		return
+	}
+	for key := range dst {
+		delete(dst, key)
+	}
+	for _, value := range splitAdminIDs(raw) {
+		if id, err := strconv.ParseInt(value, 10, 64); err == nil {
+			dst[id] = struct{}{}
+		}
+	}
+}
+
+func splitAdminIDs(raw string) []string {
+	raw = strings.TrimSpace(raw)
+	if raw == "" {
+		return nil
+	}
+	parts := strings.FieldsFunc(raw, func(r rune) bool {
+		return r == ',' || r == ';' || r == ' ' || r == '\n' || r == '\t'
+	})
+	result := make([]string, 0, len(parts))
+	for _, part := range parts {
+		value := strings.TrimSpace(part)
+		if value == "" {
+			continue
+		}
+		result = append(result, value)
+	}
+	return result
 }
 
 // Shutdown releases resources.

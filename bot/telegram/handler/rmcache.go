@@ -17,6 +17,7 @@ type RmCacheHandler struct {
 	Repo            botpkg.SongRepository
 	PlatformManager platform.Manager
 	RateLimiter     *telegram.RateLimiter
+	AdminIDs        map[int64]struct{}
 }
 
 func (h *RmCacheHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
@@ -24,6 +25,9 @@ func (h *RmCacheHandler) Handle(ctx context.Context, b *bot.Bot, update *models.
 		return
 	}
 	message := update.Message
+	if !isBotAdmin(h.AdminIDs, message.From.ID) {
+		return
+	}
 	args := commandArguments(message.Text)
 	if args == "" {
 		params := &bot.SendMessageParams{
