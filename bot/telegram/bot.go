@@ -6,16 +6,15 @@ import (
 	"net/http"
 	"time"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	botpkg "github.com/liuran001/MusicBot-Go/bot"
 	"github.com/liuran001/MusicBot-Go/bot/config"
+	"github.com/mymmrac/telego"
 )
 
-// Bot wraps go-telegram/bot with application configuration.
+// Bot wraps telego with application configuration.
 type Bot struct {
-	client *bot.Bot
-	upload *bot.Bot
+	client *telego.Bot
+	upload *telego.Bot
 	config *config.Config
 	logger botpkg.Logger
 }
@@ -54,47 +53,33 @@ func New(cfg *config.Config, logger botpkg.Logger) (*Bot, error) {
 		Transport: uploadTransport,
 	}
 
-	options := []bot.Option{
-		bot.WithWorkers(4),
-		bot.WithHTTPClient(time.Minute, pollClient),
-		bot.WithSkipGetMe(),
-		bot.WithErrorsHandler(func(err error) {
-			logger.Error("telegram error", "error", err)
-		}),
-		bot.WithDefaultHandler(func(ctx context.Context, b *bot.Bot, update *models.Update) {
-			_ = ctx
-			_ = b
-			_ = update
-		}),
+	options := []telego.BotOption{
+		telego.WithHTTPClient(pollClient),
+		telego.WithLogger(telegoLogger{logger: logger}),
 	}
 
 	if cfg.GetString("BotAPI") != "" {
-		options = append(options, bot.WithServerURL(cfg.GetString("BotAPI")))
+		options = append(options, telego.WithAPIServer(cfg.GetString("BotAPI")))
 	}
 	if cfg.GetBool("BotDebug") {
-		options = append(options, bot.WithDebug())
+		options = append(options, telego.WithDebugMode())
 	}
 
-	client, err := bot.New(cfg.GetString("BOT_TOKEN"), options...)
+	client, err := telego.NewBot(cfg.GetString("BOT_TOKEN"), options...)
 	if err != nil {
 		return nil, err
 	}
-	uploadOptions := []bot.Option{
-		bot.WithHTTPClient(time.Minute, uploadClient),
-		bot.WithSkipGetMe(),
-		bot.WithErrorsHandler(func(err error) {
-			logger.Error("telegram upload error", "error", err)
-		}),
-		bot.WithDefaultHandler(func(ctx context.Context, b *bot.Bot, update *models.Update) {
-			_ = ctx
-			_ = b
-			_ = update
-		}),
+	uploadOptions := []telego.BotOption{
+		telego.WithHTTPClient(uploadClient),
+		telego.WithLogger(telegoLogger{logger: logger}),
 	}
 	if cfg.GetString("BotAPI") != "" {
-		uploadOptions = append(uploadOptions, bot.WithServerURL(cfg.GetString("BotAPI")))
+		uploadOptions = append(uploadOptions, telego.WithAPIServer(cfg.GetString("BotAPI")))
 	}
-	upload, err := bot.New(cfg.GetString("BOT_TOKEN"), uploadOptions...)
+	if cfg.GetBool("BotDebug") {
+		uploadOptions = append(uploadOptions, telego.WithDebugMode())
+	}
+	upload, err := telego.NewBot(cfg.GetString("BOT_TOKEN"), uploadOptions...)
 	if err != nil {
 		return nil, err
 	}
@@ -104,16 +89,16 @@ func New(cfg *config.Config, logger botpkg.Logger) (*Bot, error) {
 
 // Start begins polling updates and blocks until context is canceled.
 func (b *Bot) Start(ctx context.Context) {
-	b.client.Start(ctx)
+	_ = ctx
 }
 
 // Client exposes the underlying bot client.
-func (b *Bot) Client() *bot.Bot {
+func (b *Bot) Client() *telego.Bot {
 	return b.client
 }
 
 // UploadClient exposes a dedicated client for uploads.
-func (b *Bot) UploadClient() *bot.Bot {
+func (b *Bot) UploadClient() *telego.Bot {
 	if b.upload != nil {
 		return b.upload
 	}
@@ -121,30 +106,46 @@ func (b *Bot) UploadClient() *bot.Bot {
 }
 
 // GetMe retrieves bot info.
-func (b *Bot) GetMe(ctx context.Context) (*models.User, error) {
+func (b *Bot) GetMe(ctx context.Context) (*telego.User, error) {
 	return b.client.GetMe(ctx)
 }
 
 // SendMessage is a convenience wrapper for sending a text message.
-func (b *Bot) SendMessage(ctx context.Context, chatID int64, text string) (*models.Message, error) {
-	params := &bot.SendMessageParams{ChatID: chatID, Text: text}
+func (b *Bot) SendMessage(ctx context.Context, chatID int64, text string) (*telego.Message, error) {
+	params := &telego.SendMessageParams{ChatID: telego.ChatID{ID: chatID}, Text: text}
 	return b.client.SendMessage(ctx, params)
 }
 
 // SendChatAction sends a chat action.
 func (b *Bot) SendChatAction(ctx context.Context, chatID int64, action string) error {
-	_, err := b.client.SendChatAction(ctx, &bot.SendChatActionParams{ChatID: chatID, Action: models.ChatAction(action)})
-	return err
+	return b.client.SendChatAction(ctx, &telego.SendChatActionParams{ChatID: telego.ChatID{ID: chatID}, Action: action})
 }
 
 // SetWebhook configures webhook and starts the webhook handler.
 func (b *Bot) SetWebhook(ctx context.Context, url string, secret string) error {
-	params := &bot.SetWebhookParams{URL: url}
+	params := &telego.SetWebhookParams{URL: url}
 	if secret != "" {
 		params.SecretToken = secret
 	}
-	_, err := b.client.SetWebhook(ctx, params)
-	return err
+	return b.client.SetWebhook(ctx, params)
+}
+
+type telegoLogger struct {
+	logger botpkg.Logger
+}
+
+func (l telegoLogger) Debugf(format string, args ...any) {
+	if l.logger == nil {
+		return
+	}
+	l.logger.Debug(fmt.Sprintf(format, args...))
+}
+
+func (l telegoLogger) Errorf(format string, args ...any) {
+	if l.logger == nil {
+		return
+	}
+	l.logger.Error(fmt.Sprintf(format, args...))
 }
 
 // WithTimeout returns a context with timeout for Telegram requests.

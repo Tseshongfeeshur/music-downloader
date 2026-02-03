@@ -6,9 +6,9 @@ import (
 	"testing"
 	"time"
 
-	"github.com/go-telegram/bot/models"
 	botpkg "github.com/liuran001/MusicBot-Go/bot"
 	"github.com/liuran001/MusicBot-Go/bot/platform"
+	"github.com/mymmrac/telego"
 )
 
 func TestSearchHandler_searchLimit(t *testing.T) {
@@ -64,8 +64,8 @@ func TestSearchHandler_resolveDefaultQuality_Group(t *testing.T) {
 	}
 
 	handler := &SearchHandler{Repo: repo}
-	msg := &models.Message{
-		Chat: models.Chat{
+	msg := &telego.Message{
+		Chat: telego.Chat{
 			ID:   -100123,
 			Type: "group",
 		},
@@ -90,8 +90,8 @@ func TestSearchHandler_resolveDefaultQuality_Private(t *testing.T) {
 	}
 
 	handler := &SearchHandler{Repo: repo}
-	msg := &models.Message{
-		Chat: models.Chat{
+	msg := &telego.Message{
+		Chat: telego.Chat{
 			ID:   12345,
 			Type: "private",
 		},
@@ -108,8 +108,8 @@ func TestSearchHandler_resolveDefaultQuality_NoSettings(t *testing.T) {
 	ctx := context.Background()
 	handler := &SearchHandler{Repo: repo}
 
-	msg := &models.Message{
-		Chat: models.Chat{
+	msg := &telego.Message{
+		Chat: telego.Chat{
 			ID:   -100123,
 			Type: "group",
 		},
@@ -124,8 +124,8 @@ func TestSearchHandler_resolveDefaultQuality_NoSettings(t *testing.T) {
 func TestSearchHandler_resolveDefaultQuality_NilRepo(t *testing.T) {
 	handler := &SearchHandler{Repo: nil}
 	ctx := context.Background()
-	msg := &models.Message{
-		Chat: models.Chat{
+	msg := &telego.Message{
+		Chat: telego.Chat{
 			ID:   -100123,
 			Type: "group",
 		},

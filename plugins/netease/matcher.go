@@ -72,6 +72,9 @@ func (m *URLMatcher) MatchURL(rawURL string) (trackID string, matched bool) {
 
 		id := params.Get("id")
 		if id != "" {
+			if len(id) < 5 {
+				return "", false
+			}
 			return id, true
 		}
 	}
@@ -82,7 +85,7 @@ func (m *URLMatcher) MatchURL(rawURL string) (trackID string, matched bool) {
 	if len(pathSegments) >= 2 {
 		// Last segment might be the ID
 		lastSegment := pathSegments[len(pathSegments)-1]
-		if lastSegment != "" && allDigits(lastSegment) {
+		if lastSegment != "" && allDigits(lastSegment) && len(lastSegment) >= 5 {
 			return lastSegment, true
 		}
 	}

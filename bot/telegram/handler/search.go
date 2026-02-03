@@ -9,11 +9,10 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	botpkg "github.com/liuran001/MusicBot-Go/bot"
 	"github.com/liuran001/MusicBot-Go/bot/platform"
 	"github.com/liuran001/MusicBot-Go/bot/telegram"
+	"github.com/mymmrac/telego"
 )
 
 // SearchHandler handles /search and private message search.
@@ -38,9 +37,12 @@ var searchPlatformAliases = map[string]string{
 	"wy":      "netease",
 	"163":     "netease",
 	"netease": "netease",
+	"网易云":     "netease",
+	"网易云音乐":   "netease",
 	"qq":      "tencent",
 	"tencent": "tencent",
 	"qqmusic": "tencent",
+	"qq音乐":    "tencent",
 }
 
 type searchState struct {
@@ -52,7 +54,7 @@ type searchState struct {
 	updatedAt   time.Time
 }
 
-func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (h *SearchHandler) Handle(ctx context.Context, b *telego.Bot, update *telego.Update) {
 	if update == nil || update.Message == nil {
 		return
 	}
@@ -67,10 +69,10 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 		}
 	}
 	if strings.TrimSpace(keyword) == "" {
-		params := &bot.SendMessageParams{
-			ChatID:          message.Chat.ID,
+		params := &telego.SendMessageParams{
+			ChatID:          telego.ChatID{ID: message.Chat.ID},
 			Text:            inputKeyword,
-			ReplyParameters: &models.ReplyParameters{MessageID: message.ID},
+			ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
 		}
 		if h.RateLimiter != nil {
 			_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)
@@ -80,8 +82,8 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 		return
 	}
 
-	msgResult, err := b.SendMessage(ctx, &bot.SendMessageParams{
-		ChatID:          message.Chat.ID,
+	msgResult, err := b.SendMessage(ctx, &telego.SendMessageParams{
+		ChatID:          telego.ChatID{ID: message.Chat.ID},
 		MessageThreadID: threadID,
 		Text:            searching,
 		ReplyParameters: replyParams,
@@ -90,9 +92,9 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 		return
 	}
 	if h.PlatformManager == nil {
-		params := &bot.EditMessageTextParams{
-			ChatID:    msgResult.Chat.ID,
-			MessageID: msgResult.ID,
+		params := &telego.EditMessageTextParams{
+			ChatID:    telego.ChatID{ID: msgResult.Chat.ID},
+			MessageID: msgResult.MessageID,
 			Text:      noResults,
 		}
 		if h.RateLimiter != nil {
@@ -103,7 +105,8 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 		return
 	}
 
-	keyword, requestedPlatform, hasPlatformSuffix := parseSearchKeywordPlatform(keyword)
+	keyword, requestedPlatform, qualityOverride := parseTrailingOptions(keyword)
+	hasPlatformSuffix := strings.TrimSpace(requestedPlatform) != ""
 	// Get user's default platform from settings
 	platformName := h.DefaultPlatform
 	if platformName == "" {
@@ -140,9 +143,9 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 
 	plat := h.PlatformManager.Get(platformName)
 	if plat == nil {
-		params := &bot.EditMessageTextParams{
-			ChatID:    msgResult.Chat.ID,
-			MessageID: msgResult.ID,
+		params := &telego.EditMessageTextParams{
+			ChatID:    telego.ChatID{ID: msgResult.Chat.ID},
+			MessageID: msgResult.MessageID,
 			Text:      noResults,
 		}
 		if h.RateLimiter != nil {
@@ -154,9 +157,9 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 	}
 
 	if !plat.SupportsSearch() {
-		params := &bot.EditMessageTextParams{
-			ChatID:    msgResult.Chat.ID,
-			MessageID: msgResult.ID,
+		params := &telego.EditMessageTextParams{
+			ChatID:    telego.ChatID{ID: msgResult.Chat.ID},
+			MessageID: msgResult.MessageID,
 			Text:      "此平台不支持搜索功能",
 		}
 		if h.RateLimiter != nil {
@@ -194,9 +197,9 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 			} else if errors.Is(err, platform.ErrUnavailable) {
 				errorText = "搜索服务暂时不可用"
 			}
-			params := &bot.EditMessageTextParams{
-				ChatID:    msgResult.Chat.ID,
-				MessageID: msgResult.ID,
+			params := &telego.EditMessageTextParams{
+				ChatID:    telego.ChatID{ID: msgResult.Chat.ID},
+				MessageID: msgResult.MessageID,
 				Text:      errorText,
 			}
 			if h.RateLimiter != nil {
@@ -209,9 +212,9 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 	}
 
 	if len(tracks) == 0 {
-		params := &bot.EditMessageTextParams{
-			ChatID:    msgResult.Chat.ID,
-			MessageID: msgResult.ID,
+		params := &telego.EditMessageTextParams{
+			ChatID:    telego.ChatID{ID: msgResult.Chat.ID},
+			MessageID: msgResult.MessageID,
 			Text:      noResults,
 		}
 		if h.RateLimiter != nil {
@@ -239,23 +242,26 @@ func (h *SearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 	}
 
 	qualityValue := h.resolveDefaultQuality(ctx, message, userID)
-	pageText, keyboard := h.buildSearchPage(tracks, platformName, keyword, qualityValue, requesterID, msgResult.ID, 1)
+	if strings.TrimSpace(qualityOverride) != "" {
+		qualityValue = qualityOverride
+	}
+	pageText, keyboard := h.buildSearchPage(tracks, platformName, keyword, qualityValue, requesterID, msgResult.MessageID, 1)
 	textMessage.WriteString(pageText)
 	disablePreview := true
-	params := &bot.EditMessageTextParams{
-		ChatID:             msgResult.Chat.ID,
-		MessageID:          msgResult.ID,
+	params := &telego.EditMessageTextParams{
+		ChatID:             telego.ChatID{ID: msgResult.Chat.ID},
+		MessageID:          msgResult.MessageID,
 		Text:               textMessage.String(),
-		ParseMode:          models.ParseModeMarkdown,
+		ParseMode:          telego.ModeMarkdownV2,
 		ReplyMarkup:        keyboard,
-		LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: &disablePreview},
+		LinkPreviewOptions: &telego.LinkPreviewOptions{IsDisabled: disablePreview},
 	}
 	if h.RateLimiter != nil {
 		_, _ = telegram.EditMessageTextWithRetry(ctx, h.RateLimiter, b, params)
 	} else {
 		_, _ = b.EditMessageText(ctx, params)
 	}
-	h.storeSearchState(msgResult.ID, &searchState{
+	h.storeSearchState(msgResult.MessageID, &searchState{
 		keyword:     keyword,
 		platform:    platformName,
 		quality:     qualityValue,
@@ -270,7 +276,7 @@ type SearchCallbackHandler struct {
 	RateLimiter *telegram.RateLimiter
 }
 
-func (h *SearchCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (h *SearchCallbackHandler) Handle(ctx context.Context, b *telego.Bot, update *telego.Update) {
 	if update == nil || update.CallbackQuery == nil || h.Search == nil {
 		return
 	}
@@ -299,13 +305,16 @@ func (h *SearchCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update *
 		return
 	}
 	requesterID, _ := strconv.ParseInt(parts[requesterIDIndex], 10, 64)
-	if query.Message.Message == nil {
+	if query.Message == nil {
 		return
 	}
-	msg := query.Message.Message
+	msg := query.Message.Message()
+	if msg == nil {
+		return
+	}
 	if msg.Chat.Type != "private" {
 		if !isRequesterOrAdmin(ctx, b, msg.Chat.ID, query.From.ID, requesterID) {
-			_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			_ = b.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
 				CallbackQueryID: query.ID,
 				Text:            callbackDenied,
 				ShowAlert:       true,
@@ -315,20 +324,20 @@ func (h *SearchCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update *
 	}
 	state, ok := h.Search.getSearchState(messageID)
 	if !ok {
-		_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		_ = b.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: query.ID,
 			Text:            "搜索结果已过期，请重新搜索",
 		})
 		return
 	}
 	if action == "close" {
-		deleteParams := &bot.DeleteMessageParams{ChatID: msg.Chat.ID, MessageID: msg.ID}
+		deleteParams := &telego.DeleteMessageParams{ChatID: telego.ChatID{ID: msg.Chat.ID}, MessageID: msg.MessageID}
 		if h.RateLimiter != nil {
 			_ = telegram.DeleteMessageWithRetry(ctx, h.RateLimiter, b, deleteParams)
 		} else {
-			_, _ = b.DeleteMessage(ctx, deleteParams)
+			_ = b.DeleteMessage(ctx, deleteParams)
 		}
-		_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+		_ = b.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
 		return
 	}
 	if action == "platform" {
@@ -361,7 +370,7 @@ func (h *SearchCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update *
 	}
 	tracks, err := plat.Search(ctx, state.keyword, limit)
 	if err != nil {
-		params := &bot.EditMessageTextParams{ChatID: msg.Chat.ID, MessageID: msg.ID, Text: "搜索失败，请稍后重试"}
+		params := &telego.EditMessageTextParams{ChatID: telego.ChatID{ID: msg.Chat.ID}, MessageID: msg.MessageID, Text: "搜索失败，请稍后重试"}
 		if h.RateLimiter != nil {
 			_, _ = telegram.EditMessageTextWithRetry(ctx, h.RateLimiter, b, params)
 		} else {
@@ -370,7 +379,7 @@ func (h *SearchCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update *
 		return
 	}
 	if len(tracks) == 0 {
-		params := &bot.EditMessageTextParams{ChatID: msg.Chat.ID, MessageID: msg.ID, Text: noResults}
+		params := &telego.EditMessageTextParams{ChatID: telego.ChatID{ID: msg.Chat.ID}, MessageID: msg.MessageID, Text: noResults}
 		if h.RateLimiter != nil {
 			_, _ = telegram.EditMessageTextWithRetry(ctx, h.RateLimiter, b, params)
 		} else {
@@ -382,13 +391,13 @@ func (h *SearchCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update *
 	pageText, keyboard := h.Search.buildSearchPage(tracks, state.platform, state.keyword, state.quality, state.requesterID, messageID, page)
 	text := textHeader + pageText
 	disablePreview := true
-	params := &bot.EditMessageTextParams{
-		ChatID:             msg.Chat.ID,
-		MessageID:          msg.ID,
+	params := &telego.EditMessageTextParams{
+		ChatID:             telego.ChatID{ID: msg.Chat.ID},
+		MessageID:          msg.MessageID,
 		Text:               text,
-		ParseMode:          models.ParseModeMarkdown,
+		ParseMode:          telego.ModeMarkdownV2,
 		ReplyMarkup:        keyboard,
-		LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: &disablePreview},
+		LinkPreviewOptions: &telego.LinkPreviewOptions{IsDisabled: disablePreview},
 	}
 	if h.RateLimiter != nil {
 		_, _ = telegram.EditMessageTextWithRetry(ctx, h.RateLimiter, b, params)
@@ -396,7 +405,7 @@ func (h *SearchCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update *
 		_, _ = b.EditMessageText(ctx, params)
 	}
 	h.Search.storeSearchState(messageID, state)
-	_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
+	_ = b.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID})
 }
 
 func (h *SearchHandler) searchLimit(platformName string) int {
@@ -406,7 +415,7 @@ func (h *SearchHandler) searchLimit(platformName string) int {
 	return defaultSearchLimit
 }
 
-func (h *SearchHandler) resolveDefaultQuality(ctx context.Context, message *models.Message, userID int64) string {
+func (h *SearchHandler) resolveDefaultQuality(ctx context.Context, message *telego.Message, userID int64) string {
 	qualityValue := "hires"
 	if h.Repo == nil {
 		return qualityValue
@@ -429,7 +438,7 @@ func (h *SearchHandler) resolveDefaultQuality(ctx context.Context, message *mode
 	return qualityValue
 }
 
-func (h *SearchHandler) buildSearchPage(tracks []platform.Track, platformName, keyword, qualityValue string, requesterID int64, messageID int, page int) (string, *models.InlineKeyboardMarkup) {
+func (h *SearchHandler) buildSearchPage(tracks []platform.Track, platformName, keyword, qualityValue string, requesterID int64, messageID int, page int) (string, *telego.InlineKeyboardMarkup) {
 	if page < 1 {
 		page = 1
 	}
@@ -457,7 +466,7 @@ func (h *SearchHandler) buildSearchPage(tracks []platform.Track, platformName, k
 	} else {
 		textMessage.WriteString("\n")
 	}
-	buttons := make([]models.InlineKeyboardButton, 0, searchPageSize)
+	buttons := make([]telego.InlineKeyboardButton, 0, searchPageSize)
 	for i := start; i < end; i++ {
 		track := tracks[i]
 		escapedTitle := mdV2Replacer.Replace(track.Title)
@@ -477,49 +486,49 @@ func (h *SearchHandler) buildSearchPage(tracks []platform.Track, platformName, k
 		songArtists := strings.Join(artistParts, " / ")
 		textMessage.WriteString(fmt.Sprintf("%d\\. 「%s」 \\- %s\n", i-start+1, trackLink, songArtists))
 		callbackData := fmt.Sprintf("music %s %s %s %d", platformName, track.ID, qualityValue, requesterID)
-		buttons = append(buttons, models.InlineKeyboardButton{
+		buttons = append(buttons, telego.InlineKeyboardButton{
 			Text:         fmt.Sprintf("%d", i-start+1),
 			CallbackData: callbackData,
 		})
 	}
 
-	var rows [][]models.InlineKeyboardButton
+	var rows [][]telego.InlineKeyboardButton
 	if len(buttons) > 0 {
 		rows = append(rows, buttons)
 	}
 	if pageCount > 1 {
-		navRow := make([]models.InlineKeyboardButton, 0, 2)
+		navRow := make([]telego.InlineKeyboardButton, 0, 2)
 		if page == 1 {
-			navRow = append(navRow, models.InlineKeyboardButton{Text: "关闭", CallbackData: fmt.Sprintf("search %d close %d", messageID, requesterID)})
-			navRow = append(navRow, models.InlineKeyboardButton{Text: "下一页", CallbackData: fmt.Sprintf("search %d page %d %d", messageID, page+1, requesterID)})
+			navRow = append(navRow, telego.InlineKeyboardButton{Text: "关闭", CallbackData: fmt.Sprintf("search %d close %d", messageID, requesterID)})
+			navRow = append(navRow, telego.InlineKeyboardButton{Text: "下一页", CallbackData: fmt.Sprintf("search %d page %d %d", messageID, page+1, requesterID)})
 		} else if page == pageCount {
-			navRow = append(navRow, models.InlineKeyboardButton{Text: "上一页", CallbackData: fmt.Sprintf("search %d page %d %d", messageID, page-1, requesterID)})
-			navRow = append(navRow, models.InlineKeyboardButton{Text: "回到首页", CallbackData: fmt.Sprintf("search %d home %d", messageID, requesterID)})
+			navRow = append(navRow, telego.InlineKeyboardButton{Text: "上一页", CallbackData: fmt.Sprintf("search %d page %d %d", messageID, page-1, requesterID)})
+			navRow = append(navRow, telego.InlineKeyboardButton{Text: "回到首页", CallbackData: fmt.Sprintf("search %d home %d", messageID, requesterID)})
 		} else {
-			navRow = append(navRow, models.InlineKeyboardButton{Text: "上一页", CallbackData: fmt.Sprintf("search %d page %d %d", messageID, page-1, requesterID)})
-			navRow = append(navRow, models.InlineKeyboardButton{Text: "下一页", CallbackData: fmt.Sprintf("search %d page %d %d", messageID, page+1, requesterID)})
+			navRow = append(navRow, telego.InlineKeyboardButton{Text: "上一页", CallbackData: fmt.Sprintf("search %d page %d %d", messageID, page-1, requesterID)})
+			navRow = append(navRow, telego.InlineKeyboardButton{Text: "下一页", CallbackData: fmt.Sprintf("search %d page %d %d", messageID, page+1, requesterID)})
 		}
 		rows = append(rows, navRow)
 	} else if page == 1 {
-		rows = append(rows, []models.InlineKeyboardButton{{Text: "关闭", CallbackData: fmt.Sprintf("search %d close %d", messageID, requesterID)}})
+		rows = append(rows, []telego.InlineKeyboardButton{{Text: "关闭", CallbackData: fmt.Sprintf("search %d close %d", messageID, requesterID)}})
 	}
 
 	platforms := h.searchPlatforms()
 	if len(platforms) > 1 {
-		switchRow := make([]models.InlineKeyboardButton, 0, len(platforms))
+		switchRow := make([]telego.InlineKeyboardButton, 0, len(platforms))
 		for _, name := range platforms {
 			text := fmt.Sprintf("%s %s", platformEmoji(name), platformDisplayName(name))
 			if name == platformName {
 				text = "✅ " + text
 			}
-			switchRow = append(switchRow, models.InlineKeyboardButton{
+			switchRow = append(switchRow, telego.InlineKeyboardButton{
 				Text:         text,
 				CallbackData: fmt.Sprintf("search %d platform %s %d", messageID, name, requesterID),
 			})
 		}
 		rows = append(rows, switchRow)
 	}
-	keyboard := &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+	keyboard := &telego.InlineKeyboardMarkup{InlineKeyboard: rows}
 	return textMessage.String(), keyboard
 }
 

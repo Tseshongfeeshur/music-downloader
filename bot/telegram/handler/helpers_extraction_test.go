@@ -3,8 +3,8 @@ package handler
 import (
 	"testing"
 
-	"github.com/go-telegram/bot/models"
 	"github.com/liuran001/MusicBot-Go/bot/platform"
+	"github.com/mymmrac/telego"
 )
 
 func TestCommandArguments(t *testing.T) {
@@ -98,7 +98,7 @@ func TestExtractPlatformTrack_CommandArgs(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := &models.Message{Text: tt.text}
+			msg := &telego.Message{Text: tt.text}
 			gotPlatform, gotTrackID, gotFound := extractPlatformTrack(msg, mgr)
 			if gotPlatform != tt.wantPlatform || gotTrackID != tt.wantTrackID || gotFound != tt.wantFound {
 				t.Errorf("extractPlatformTrack() = (%q, %q, %v), want (%q, %q, %v)",
@@ -145,7 +145,7 @@ func TestExtractPlatformTrack_MatchText(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := &models.Message{Text: tt.text}
+			msg := &telego.Message{Text: tt.text}
 			gotPlatform, gotTrackID, gotFound := extractPlatformTrack(msg, mgr)
 			if gotPlatform != tt.wantPlatform || gotTrackID != tt.wantTrackID || gotFound != tt.wantFound {
 				t.Errorf("extractPlatformTrack() = (%q, %q, %v), want (%q, %q, %v)",
@@ -192,7 +192,7 @@ func TestExtractPlatformTrack_MatchURL(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := &models.Message{Text: tt.text}
+			msg := &telego.Message{Text: tt.text}
 			gotPlatform, gotTrackID, gotFound := extractPlatformTrack(msg, mgr)
 			if gotPlatform != tt.wantPlatform || gotTrackID != tt.wantTrackID || gotFound != tt.wantFound {
 				t.Errorf("extractPlatformTrack() = (%q, %q, %v), want (%q, %q, %v)",
@@ -213,7 +213,7 @@ func TestExtractPlatformTrack_NilMessage(t *testing.T) {
 
 func TestExtractPlatformTrack_EmptyText(t *testing.T) {
 	mgr := newStubManager()
-	msg := &models.Message{Text: ""}
+	msg := &telego.Message{Text: ""}
 	gotPlatform, gotTrackID, gotFound := extractPlatformTrack(msg, mgr)
 	if gotPlatform != "" || gotTrackID != "" || gotFound != false {
 		t.Errorf("extractPlatformTrack(empty) = (%q, %q, %v), want (\"\", \"\", false)",
@@ -265,7 +265,17 @@ func TestExtractQualityOverride(t *testing.T) {
 		{
 			name: "not a command",
 			text: "netease 12345 hires",
-			want: "",
+			want: "hires",
+		},
+		{
+			name: "text quality high",
+			text: "周杰伦 high",
+			want: "high",
+		},
+		{
+			name: "text quality low",
+			text: "周杰伦 low",
+			want: "standard",
 		},
 		{
 			name: "empty text",
@@ -276,7 +286,7 @@ func TestExtractQualityOverride(t *testing.T) {
 
 	for _, tt := range tests {
 		t.Run(tt.name, func(t *testing.T) {
-			msg := &models.Message{Text: tt.text}
+			msg := &telego.Message{Text: tt.text}
 			got := extractQualityOverride(msg)
 			if got != tt.want {
 				t.Errorf("extractQualityOverride(%q) = %q, want %q", tt.text, got, tt.want)

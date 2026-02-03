@@ -15,13 +15,12 @@ import (
 	"time"
 
 	"github.com/go-flac/go-flac"
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	botpkg "github.com/liuran001/MusicBot-Go/bot"
 	"github.com/liuran001/MusicBot-Go/bot/download"
 	"github.com/liuran001/MusicBot-Go/bot/id3"
 	"github.com/liuran001/MusicBot-Go/bot/platform"
 	"github.com/liuran001/MusicBot-Go/bot/telegram"
+	"github.com/mymmrac/telego"
 )
 
 // MusicHandler handles /music and related commands.
@@ -41,7 +40,7 @@ type MusicHandler struct {
 	UploadLimiter    chan struct{}
 	UploadQueue      chan uploadTask
 	UploadQueueSize  int
-	UploadBot        *bot.Bot
+	UploadBot        *telego.Bot
 	RateLimiter      *telegram.RateLimiter
 	initOnce         sync.Once
 	queueMu          sync.Mutex
@@ -52,10 +51,10 @@ type MusicHandler struct {
 type uploadTask struct {
 	ctx       context.Context
 	cancel    context.CancelFunc
-	b         *bot.Bot
-	statusBot *bot.Bot
-	statusMsg *models.Message
-	message   *models.Message
+	b         *telego.Bot
+	statusBot *telego.Bot
+	statusMsg *telego.Message
+	message   *telego.Message
 	songInfo  botpkg.SongInfo
 	musicPath string
 	picPath   string
@@ -65,13 +64,13 @@ type uploadTask struct {
 }
 
 type queuedStatus struct {
-	bot      *bot.Bot
-	message  *models.Message
+	bot      *telego.Bot
+	message  *telego.Message
 	songInfo botpkg.SongInfo
 }
 
 type uploadResult struct {
-	message *models.Message
+	message *telego.Message
 	err     error
 }
 
@@ -99,20 +98,26 @@ func (h *MusicHandler) StartWorker(ctx context.Context) {
 }
 
 // Handle processes music download and send flow.
-func (h *MusicHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (h *MusicHandler) Handle(ctx context.Context, b *telego.Bot, update *telego.Update) {
 	if update == nil || update.Message == nil {
 		return
 	}
 	message := update.Message
 	cmd := commandName(message.Text, h.BotName)
+	if cmd == "start" {
+		args := commandArguments(message.Text)
+		if platformName, trackID, qualityOverride, ok := parseInlineStartParameter(args); ok {
+			h.dispatch(ctx, b, message, platformName, trackID, qualityOverride)
+			return
+		}
+	}
 	if cmd == "start" || cmd == "help" {
-		disablePreview := true
-		params := &bot.SendMessageParams{
-			ChatID:             message.Chat.ID,
+		params := &telego.SendMessageParams{
+			ChatID:             telego.ChatID{ID: message.Chat.ID},
 			Text:               helpText,
-			ParseMode:          models.ParseModeMarkdown,
-			LinkPreviewOptions: &models.LinkPreviewOptions{IsDisabled: &disablePreview},
-			ReplyParameters:    &models.ReplyParameters{MessageID: message.ID},
+			ParseMode:          telego.ModeMarkdownV2,
+			LinkPreviewOptions: &telego.LinkPreviewOptions{IsDisabled: true},
+			ReplyParameters:    &telego.ReplyParameters{MessageID: message.MessageID},
 		}
 		if h.RateLimiter != nil {
 			_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)
@@ -124,10 +129,10 @@ func (h *MusicHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Up
 	if cmd == "music" {
 		args := commandArguments(message.Text)
 		if strings.TrimSpace(args) == "" {
-			params := &bot.SendMessageParams{
-				ChatID:          message.Chat.ID,
+			params := &telego.SendMessageParams{
+				ChatID:          telego.ChatID{ID: message.Chat.ID},
 				Text:            inputContent,
-				ReplyParameters: &models.ReplyParameters{MessageID: message.ID},
+				ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
 			}
 			if h.RateLimiter != nil {
 				_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)
@@ -141,10 +146,10 @@ func (h *MusicHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Up
 			h.dispatch(ctx, b, message, platformName, trackID, qualityOverride)
 			return
 		}
-		params := &bot.SendMessageParams{
-			ChatID:          message.Chat.ID,
+		params := &telego.SendMessageParams{
+			ChatID:          telego.ChatID{ID: message.Chat.ID},
 			Text:            noResults,
-			ReplyParameters: &models.ReplyParameters{MessageID: message.ID},
+			ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
 		}
 		if h.RateLimiter != nil {
 			_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)
@@ -163,10 +168,11 @@ func (h *MusicHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Up
 	h.dispatch(ctx, b, message, platformName, trackID, qualityOverride)
 }
 
-func (h *MusicHandler) dispatch(ctx context.Context, b *bot.Bot, message *models.Message, platformName, trackID string, qualityOverride string) {
+func (h *MusicHandler) dispatch(ctx context.Context, b *telego.Bot, message *telego.Message, platformName, trackID string, qualityOverride string) {
+	baseCtx := detachContext(ctx)
 	if h.Pool == nil {
 		go func() {
-			_ = h.processMusic(ctx, b, message, platformName, trackID, qualityOverride)
+			_ = h.processMusic(baseCtx, b, message, platformName, trackID, qualityOverride)
 		}()
 		return
 	}
@@ -180,7 +186,7 @@ func (h *MusicHandler) dispatch(ctx context.Context, b *bot.Bot, message *models
 					}
 				}
 			}()
-			_ = h.processMusic(ctx, b, message, platformName, trackID, qualityOverride)
+			_ = h.processMusic(baseCtx, b, message, platformName, trackID, qualityOverride)
 		}); err != nil {
 			if h.Logger != nil {
 				h.Logger.Error("failed to enqueue music task", "platform", platformName, "trackID", trackID, "error", err)
@@ -189,7 +195,7 @@ func (h *MusicHandler) dispatch(ctx context.Context, b *bot.Bot, message *models
 	}()
 }
 
-func (h *MusicHandler) processMusic(ctx context.Context, b *bot.Bot, message *models.Message, platformName, trackID string, qualityOverride string) error {
+func (h *MusicHandler) processMusic(ctx context.Context, b *telego.Bot, message *telego.Message, platformName, trackID string, qualityOverride string) error {
 	threadID := 0
 	if message != nil {
 		threadID = message.MessageThreadID
@@ -198,7 +204,7 @@ func (h *MusicHandler) processMusic(ctx context.Context, b *bot.Bot, message *mo
 	silent := h.shouldSilentAutoFetch(message)
 
 	var songInfo botpkg.SongInfo
-	var msgResult *models.Message
+	var msgResult *telego.Message
 
 	// Request-level cache to avoid duplicate DB queries
 	cacheMap := make(map[string]*botpkg.SongInfo)
@@ -434,41 +440,51 @@ func (h *MusicHandler) processMusic(ctx context.Context, b *bot.Bot, message *mo
 	return nil
 }
 
-func (h *MusicHandler) resolveTrackFromQuery(ctx context.Context, message *models.Message, args string) (string, string, bool) {
+func (h *MusicHandler) resolveTrackFromQuery(ctx context.Context, message *telego.Message, args string) (string, string, bool) {
 	args = strings.TrimSpace(args)
 	if args == "" || h == nil || h.PlatformManager == nil {
 		return "", "", false
 	}
 
-	fields := strings.Fields(args)
+	baseText, platformSuffix, _ := parseTrailingOptions(args)
+	baseText = strings.TrimSpace(baseText)
+	if baseText == "" {
+		return "", "", false
+	}
+
+	fields := strings.Fields(baseText)
 	if len(fields) >= 2 {
 		if plat := h.PlatformManager.Get(fields[0]); plat != nil {
 			return fields[0], fields[1], true
 		}
 	}
+	if platformSuffix != "" && len(fields) == 1 {
+		if h.PlatformManager.Get(platformSuffix) != nil && isLikelyIDToken(fields[0]) {
+			return platformSuffix, fields[0], true
+		}
+	}
 
-	if urlStr := extractFirstURL(args); urlStr != "" {
+	if urlStr := extractFirstURL(baseText); urlStr != "" {
 		if plat, id, matched := h.PlatformManager.MatchURL(urlStr); matched {
 			return plat, id, true
 		}
 	}
 
-	if plat, id, matched := h.PlatformManager.MatchText(args); matched {
+	if plat, id, matched := h.PlatformManager.MatchText(baseText); matched {
 		return plat, id, true
 	}
 
-	keyword, requestedPlatform, hasSuffix := parseSearchKeywordPlatform(args)
-	keyword = strings.TrimSpace(keyword)
+	keyword := baseText
 	if keyword == "" {
 		return "", "", false
 	}
 
 	primaryPlatform := h.resolveDefaultPlatform(ctx, message)
-	if hasSuffix {
-		primaryPlatform = requestedPlatform
+	if platformSuffix != "" {
+		primaryPlatform = platformSuffix
 	}
 	fallbackPlatform := strings.TrimSpace(h.FallbackPlatform)
-	if hasSuffix {
+	if platformSuffix != "" {
 		fallbackPlatform = ""
 	}
 
@@ -493,7 +509,7 @@ func (h *MusicHandler) resolveTrackFromQuery(ctx context.Context, message *model
 	return "", "", false
 }
 
-func (h *MusicHandler) resolveFallbackTrack(ctx context.Context, message *models.Message, platformName, trackID string) (string, string, bool) {
+func (h *MusicHandler) resolveFallbackTrack(ctx context.Context, message *telego.Message, platformName, trackID string) (string, string, bool) {
 	keyword, ok := h.fallbackKeyword(message)
 	if !ok {
 		return "", "", false
@@ -508,7 +524,7 @@ func (h *MusicHandler) resolveFallbackTrack(ctx context.Context, message *models
 	return resolvedPlatform, resolvedTrackID, true
 }
 
-func (h *MusicHandler) fallbackKeyword(message *models.Message) (string, bool) {
+func (h *MusicHandler) fallbackKeyword(message *telego.Message) (string, bool) {
 	if message == nil {
 		return "", false
 	}
@@ -535,7 +551,7 @@ func (h *MusicHandler) fallbackKeyword(message *models.Message) (string, bool) {
 	return text, true
 }
 
-func (h *MusicHandler) resolveDefaultPlatform(ctx context.Context, message *models.Message) string {
+func (h *MusicHandler) resolveDefaultPlatform(ctx context.Context, message *telego.Message) string {
 	platformName := strings.TrimSpace(h.DefaultPlatform)
 	if platformName == "" {
 		platformName = "netease"
@@ -609,7 +625,7 @@ func searchLimitForPlatform(platformName string) int {
 	return defaultSearchLimit
 }
 
-func (h *MusicHandler) shouldSilentAutoFetch(message *models.Message) bool {
+func (h *MusicHandler) shouldSilentAutoFetch(message *telego.Message) bool {
 	if message == nil {
 		return false
 	}
@@ -637,7 +653,7 @@ func extractFirstURL(text string) string {
 	return strings.TrimSpace(match)
 }
 
-func (h *MusicHandler) downloadAndPrepareFromPlatform(ctx context.Context, plat platform.Platform, track *platform.Track, trackID string, info *platform.DownloadInfo, msg *models.Message, b *bot.Bot, message *models.Message, songInfo *botpkg.SongInfo) (string, string, []string, error) {
+func (h *MusicHandler) downloadAndPrepareFromPlatform(ctx context.Context, plat platform.Platform, track *platform.Track, trackID string, info *platform.DownloadInfo, msg *telego.Message, b *telego.Bot, message *telego.Message, songInfo *botpkg.SongInfo) (string, string, []string, error) {
 	cleanupList := make([]string, 0, 4)
 	if h.DownloadService == nil {
 		return "", "", cleanupList, errors.New("download service not configured")
@@ -688,9 +704,9 @@ func (h *MusicHandler) downloadAndPrepareFromPlatform(ctx context.Context, plat 
 		}
 		lastProgressText = text
 		lastProgressAt = now
-		editParams := &bot.EditMessageTextParams{
-			ChatID:    msg.Chat.ID,
-			MessageID: msg.ID,
+		editParams := &telego.EditMessageTextParams{
+			ChatID:    telego.ChatID{ID: msg.Chat.ID},
+			MessageID: msg.MessageID,
 			Text:      text,
 		}
 		if h.RateLimiter != nil {
@@ -819,17 +835,14 @@ func (h *MusicHandler) downloadAndPrepareFromPlatform(ctx context.Context, plat 
 	return filePath, thumbPicPath, cleanupList, nil
 }
 
-func (h *MusicHandler) sendMusic(ctx context.Context, b *bot.Bot, statusMsg *models.Message, message *models.Message, songInfo *botpkg.SongInfo, musicPath, picPath string, cleanup []string, platformName, trackID string) error {
+func (h *MusicHandler) sendMusic(ctx context.Context, b *telego.Bot, statusMsg *telego.Message, message *telego.Message, songInfo *botpkg.SongInfo, musicPath, picPath string, cleanup []string, platformName, trackID string) error {
 	if h == nil {
 		return errors.New("music handler not configured")
 	}
 
 	h.registerQueuedStatus(b, statusMsg, songInfo)
 
-	baseCtx := ctx
-	if baseCtx == nil {
-		baseCtx = context.Background()
-	}
+	baseCtx := detachContext(ctx)
 	resultCh := make(chan uploadResult, 1)
 	uploadCtx, cancel := context.WithCancel(baseCtx)
 	uploadBot := b
@@ -874,7 +887,7 @@ func (h *MusicHandler) sendMusic(ctx context.Context, b *bot.Bot, statusMsg *mod
 			}
 			if statusMessage != nil && taskMessage != nil {
 				if result.err == nil {
-					_, _ = statusBot.DeleteMessage(baseCtx, &bot.DeleteMessageParams{ChatID: taskMessage.Chat.ID, MessageID: statusMessage.ID})
+					_ = statusBot.DeleteMessage(baseCtx, &telego.DeleteMessageParams{ChatID: telego.ChatID{ID: taskMessage.Chat.ID}, MessageID: statusMessage.MessageID})
 				} else {
 					errText := ""
 					if result.err != nil {
@@ -974,7 +987,7 @@ func (h *MusicHandler) processUploadTask(task uploadTask) {
 	}
 }
 
-func (h *MusicHandler) registerQueuedStatus(b *bot.Bot, statusMsg *models.Message, songInfo *botpkg.SongInfo) {
+func (h *MusicHandler) registerQueuedStatus(b *telego.Bot, statusMsg *telego.Message, songInfo *botpkg.SongInfo) {
 	if h == nil || statusMsg == nil || songInfo == nil {
 		return
 	}
@@ -985,7 +998,7 @@ func (h *MusicHandler) registerQueuedStatus(b *bot.Bot, statusMsg *models.Messag
 	h.statusDirty = true
 }
 
-func (h *MusicHandler) removeQueuedStatus(statusMsg *models.Message) {
+func (h *MusicHandler) removeQueuedStatus(statusMsg *telego.Message) {
 	if h == nil || statusMsg == nil {
 		return
 	}
@@ -993,7 +1006,7 @@ func (h *MusicHandler) removeQueuedStatus(statusMsg *models.Message) {
 	defer h.queueMu.Unlock()
 	filtered := h.queuedStatus[:0]
 	for _, entry := range h.queuedStatus {
-		if entry.message == nil || entry.message.ID == statusMsg.ID {
+		if entry.message == nil || entry.message.MessageID == statusMsg.MessageID {
 			continue
 		}
 		filtered = append(filtered, entry)
@@ -1002,7 +1015,7 @@ func (h *MusicHandler) removeQueuedStatus(statusMsg *models.Message) {
 	h.statusDirty = true
 }
 
-func (h *MusicHandler) dequeueQueuedStatus(statusMsg *models.Message) {
+func (h *MusicHandler) dequeueQueuedStatus(statusMsg *telego.Message) {
 	if h == nil || statusMsg == nil {
 		return
 	}
@@ -1011,7 +1024,7 @@ func (h *MusicHandler) dequeueQueuedStatus(statusMsg *models.Message) {
 	filtered := h.queuedStatus[:0]
 	removed := false
 	for _, entry := range h.queuedStatus {
-		if !removed && entry.message != nil && entry.message.ID == statusMsg.ID {
+		if !removed && entry.message != nil && entry.message.MessageID == statusMsg.MessageID {
 			removed = true
 			continue
 		}
@@ -1053,37 +1066,37 @@ func (h *MusicHandler) refreshQueuedStatuses(ctx context.Context) {
 		if entry.message.Text == text {
 			continue
 		}
-		params := &bot.EditMessageTextParams{
-			ChatID:    entry.message.Chat.ID,
-			MessageID: entry.message.ID,
+		params := &telego.EditMessageTextParams{
+			ChatID:    telego.ChatID{ID: entry.message.Chat.ID},
+			MessageID: entry.message.MessageID,
 			Text:      text,
 		}
 		editedMsg, err := entry.bot.EditMessageText(ctx, params)
 		if err == nil {
 			if editedMsg != nil {
-				h.updateQueuedStatusMessage(entry.message.ID, editedMsg)
+				h.updateQueuedStatusMessage(entry.message.MessageID, editedMsg)
 			} else {
-				h.updateQueuedStatusText(entry.message.ID, text)
+				h.updateQueuedStatusText(entry.message.MessageID, text)
 			}
 			continue
 		}
 		if err != nil && strings.Contains(fmt.Sprintf("%v", err), "message to edit not found") {
-			newMsg, sendErr := entry.bot.SendMessage(ctx, &bot.SendMessageParams{ChatID: entry.message.Chat.ID, Text: text})
+			newMsg, sendErr := entry.bot.SendMessage(ctx, &telego.SendMessageParams{ChatID: telego.ChatID{ID: entry.message.Chat.ID}, Text: text})
 			if sendErr == nil && newMsg != nil {
-				h.updateQueuedStatusMessage(entry.message.ID, newMsg)
+				h.updateQueuedStatusMessage(entry.message.MessageID, newMsg)
 			}
 		}
 	}
 }
 
-func (h *MusicHandler) updateQueuedStatusMessage(oldMessageID int, newMsg *models.Message) {
+func (h *MusicHandler) updateQueuedStatusMessage(oldMessageID int, newMsg *telego.Message) {
 	if h == nil || newMsg == nil {
 		return
 	}
 	h.queueMu.Lock()
 	defer h.queueMu.Unlock()
 	for idx, entry := range h.queuedStatus {
-		if entry.message != nil && entry.message.ID == oldMessageID {
+		if entry.message != nil && entry.message.MessageID == oldMessageID {
 			entry.message = newMsg
 			h.queuedStatus[idx] = entry
 			return
@@ -1098,7 +1111,7 @@ func (h *MusicHandler) updateQueuedStatusText(messageID int, text string) {
 	h.queueMu.Lock()
 	defer h.queueMu.Unlock()
 	for idx, entry := range h.queuedStatus {
-		if entry.message != nil && entry.message.ID == messageID {
+		if entry.message != nil && entry.message.MessageID == messageID {
 			entry.message.Text = text
 			h.queuedStatus[idx] = entry
 			return
@@ -1106,7 +1119,7 @@ func (h *MusicHandler) updateQueuedStatusText(messageID int, text string) {
 	}
 }
 
-func (h *MusicHandler) sendMusicDirect(ctx context.Context, b *bot.Bot, message *models.Message, songInfo *botpkg.SongInfo, musicPath, picPath string) (*models.Message, error) {
+func (h *MusicHandler) sendMusicDirect(ctx context.Context, b *telego.Bot, message *telego.Message, songInfo *botpkg.SongInfo, musicPath, picPath string) (*telego.Message, error) {
 	if songInfo == nil {
 		return nil, errors.New("song info required")
 	}
@@ -1118,25 +1131,25 @@ func (h *MusicHandler) sendMusicDirect(ctx context.Context, b *bot.Bot, message 
 		threadID = message.MessageThreadID
 	}
 
-	var audioFile models.InputFile
-	openAudioUpload := func() (*models.InputFileUpload, *os.File, error) {
+	var audioFile telego.InputFile
+	openAudioUpload := func() (telego.InputFile, *os.File, error) {
 		if strings.TrimSpace(musicPath) == "" {
-			return nil, nil, errors.New("music file path is empty")
+			return telego.InputFile{}, nil, errors.New("music file path is empty")
 		}
 		stat, err := os.Stat(musicPath)
 		if err != nil {
-			return nil, nil, fmt.Errorf("music file not found: %w", err)
+			return telego.InputFile{}, nil, fmt.Errorf("music file not found: %w", err)
 		}
 		if stat.Size() == 0 {
-			return nil, nil, errors.New("music file is empty")
+			return telego.InputFile{}, nil, errors.New("music file is empty")
 		}
 		file, err := os.Open(musicPath)
 		if err != nil {
-			return nil, nil, err
+			return telego.InputFile{}, nil, err
 		}
-		return &models.InputFileUpload{Filename: filepath.Base(musicPath), Data: file}, file, nil
+		return telego.InputFile{File: file}, file, nil
 	}
-	openThumbUpload := func() (*models.InputFileUpload, *os.File) {
+	openThumbUpload := func() (*telego.InputFile, *os.File) {
 		if strings.TrimSpace(picPath) == "" {
 			return nil, nil
 		}
@@ -1148,10 +1161,10 @@ func (h *MusicHandler) sendMusicDirect(ctx context.Context, b *bot.Bot, message 
 		if err != nil {
 			return nil, nil
 		}
-		return &models.InputFileUpload{Filename: filepath.Base(picPath), Data: file}, file
+		return &telego.InputFile{File: file}, file
 	}
 	if songInfo.FileID != "" {
-		audioFile = &models.InputFileString{Data: songInfo.FileID}
+		audioFile = telego.InputFile{FileID: songInfo.FileID}
 	} else {
 		audioUpload, audioHandle, err := openAudioUpload()
 		if err != nil {
@@ -1159,16 +1172,16 @@ func (h *MusicHandler) sendMusicDirect(ctx context.Context, b *bot.Bot, message 
 		}
 		defer audioHandle.Close()
 		audioFile = audioUpload
-		_, _ = b.SendChatAction(uploadCtx, &bot.SendChatActionParams{ChatID: message.Chat.ID, MessageThreadID: threadID, Action: models.ChatActionUploadDocument})
+		_ = b.SendChatAction(uploadCtx, &telego.SendChatActionParams{ChatID: telego.ChatID{ID: message.Chat.ID}, MessageThreadID: threadID, Action: telego.ChatActionUploadDocument})
 	}
 
 	caption := buildMusicCaption(songInfo, h.BotName)
-	params := &bot.SendAudioParams{
-		ChatID:          message.Chat.ID,
+	params := &telego.SendAudioParams{
+		ChatID:          telego.ChatID{ID: message.Chat.ID},
 		MessageThreadID: threadID,
 		Audio:           audioFile,
 		Caption:         caption,
-		ParseMode:       models.ParseModeHTML,
+		ParseMode:       telego.ModeHTML,
 		Title:           songInfo.SongName,
 		Performer:       songInfo.SongArtists,
 		Duration:        songInfo.Duration,
@@ -1176,7 +1189,7 @@ func (h *MusicHandler) sendMusicDirect(ctx context.Context, b *bot.Bot, message 
 	}
 
 	if songInfo.ThumbFileID != "" {
-		params.Thumbnail = &models.InputFileString{Data: songInfo.ThumbFileID}
+		params.Thumbnail = &telego.InputFile{FileID: songInfo.ThumbFileID}
 	} else if picPath != "" {
 		if thumbUpload, thumbHandle := openThumbUpload(); thumbUpload != nil {
 			defer thumbHandle.Close()
@@ -1184,7 +1197,7 @@ func (h *MusicHandler) sendMusicDirect(ctx context.Context, b *bot.Bot, message 
 		}
 	}
 
-	var audio *models.Message
+	var audio *telego.Message
 	var err error
 	if h.RateLimiter != nil {
 		audio, err = telegram.SendAudioWithRetry(uploadCtx, h.RateLimiter, b, params)
@@ -1220,7 +1233,7 @@ func (h *MusicHandler) sendMusicDirect(ctx context.Context, b *bot.Bot, message 
 			return audio, err
 		}
 		defer file.Close()
-		params.Audio = &models.InputFileUpload{Filename: filepath.Base(musicPath), Data: file}
+		params.Audio = telego.InputFile{File: file}
 		if h.RateLimiter != nil {
 			audio, err = telegram.SendAudioWithRetry(uploadCtx, h.RateLimiter, b, params)
 		} else {
@@ -1230,21 +1243,21 @@ func (h *MusicHandler) sendMusicDirect(ctx context.Context, b *bot.Bot, message 
 	return audio, err
 }
 
-func buildReplyParams(message *models.Message) *models.ReplyParameters {
+func buildReplyParams(message *telego.Message) *telego.ReplyParameters {
 	if message == nil {
 		return nil
 	}
-	return &models.ReplyParameters{MessageID: message.ID}
+	return &telego.ReplyParameters{MessageID: message.MessageID}
 }
 
-func sendStatusMessage(ctx context.Context, b *bot.Bot, rateLimiter *telegram.RateLimiter, chatID int64, threadID int, replyParams *models.ReplyParameters, text string) (*models.Message, error) {
-	params := &bot.SendMessageParams{
-		ChatID:          chatID,
+func sendStatusMessage(ctx context.Context, b *telego.Bot, rateLimiter *telegram.RateLimiter, chatID int64, threadID int, replyParams *telego.ReplyParameters, text string) (*telego.Message, error) {
+	params := &telego.SendMessageParams{
+		ChatID:          telego.ChatID{ID: chatID},
 		MessageThreadID: threadID,
 		Text:            text,
 		ReplyParameters: replyParams,
 	}
-	var msg *models.Message
+	var msg *telego.Message
 	var err error
 	if rateLimiter != nil {
 		msg, err = telegram.SendMessageWithRetry(ctx, rateLimiter, b, params)
@@ -1262,19 +1275,19 @@ func sendStatusMessage(ctx context.Context, b *bot.Bot, rateLimiter *telegram.Ra
 	return msg, err
 }
 
-func editMessageTextOrSend(ctx context.Context, b *bot.Bot, rateLimiter *telegram.RateLimiter, msg *models.Message, chatID int64, text string) *models.Message {
+func editMessageTextOrSend(ctx context.Context, b *telego.Bot, rateLimiter *telegram.RateLimiter, msg *telego.Message, chatID int64, text string) *telego.Message {
 	if msg == nil {
 		return nil
 	}
 	if msg.Text == text {
 		return msg
 	}
-	editParams := &bot.EditMessageTextParams{
-		ChatID:    msg.Chat.ID,
-		MessageID: msg.ID,
+	editParams := &telego.EditMessageTextParams{
+		ChatID:    telego.ChatID{ID: msg.Chat.ID},
+		MessageID: msg.MessageID,
 		Text:      text,
 	}
-	var editedMsg *models.Message
+	var editedMsg *telego.Message
 	var err error
 	if rateLimiter != nil {
 		editedMsg, err = telegram.EditMessageTextWithRetry(ctx, rateLimiter, b, editParams)
@@ -1287,11 +1300,11 @@ func editMessageTextOrSend(ctx context.Context, b *bot.Bot, rateLimiter *telegra
 	if !strings.Contains(fmt.Sprintf("%v", err), "message to edit not found") {
 		return msg
 	}
-	sendParams := &bot.SendMessageParams{
-		ChatID: chatID,
+	sendParams := &telego.SendMessageParams{
+		ChatID: telego.ChatID{ID: chatID},
 		Text:   text,
 	}
-	var newMsg *models.Message
+	var newMsg *telego.Message
 	if rateLimiter != nil {
 		newMsg, err = telegram.SendMessageWithRetry(ctx, rateLimiter, b, sendParams)
 	} else {
@@ -1301,6 +1314,79 @@ func editMessageTextOrSend(ctx context.Context, b *bot.Bot, rateLimiter *telegra
 		return msg
 	}
 	return newMsg
+}
+
+func detachContext(ctx context.Context) context.Context {
+	if ctx == nil {
+		return context.Background()
+	}
+	return context.WithoutCancel(ctx)
+}
+
+func parseInlineStartParameter(value string) (platformName, trackID, qualityOverride string, ok bool) {
+	value = strings.TrimSpace(value)
+	if value == "" {
+		return "", "", "", false
+	}
+	parts := strings.Split(value, "_")
+	if len(parts) < 3 {
+		return "", "", "", false
+	}
+	if parts[0] != "cache" {
+		return "", "", "", false
+	}
+	platformName = parts[1]
+	trackID = parts[2]
+	if !isInlineStartToken(platformName) || !isInlineStartToken(trackID) {
+		return "", "", "", false
+	}
+	if len(parts) >= 4 {
+		qualityOverride = parts[3]
+		if !isInlineStartToken(qualityOverride) {
+			qualityOverride = ""
+		}
+		if qualityOverride != "" {
+			if _, err := platform.ParseQuality(qualityOverride); err != nil {
+				qualityOverride = ""
+			}
+		}
+	}
+	return platformName, trackID, qualityOverride, true
+}
+
+func isInlineStartToken(value string) bool {
+	if value == "" {
+		return false
+	}
+	for _, ch := range value {
+		switch {
+		case ch >= 'a' && ch <= 'z':
+		case ch >= 'A' && ch <= 'Z':
+		case ch >= '0' && ch <= '9':
+		case ch == '_' || ch == '-':
+		default:
+			return false
+		}
+	}
+	return true
+}
+
+func buildInlineStartParameterToken(platformName, trackID, qualityValue string) string {
+	if !isInlineStartToken(platformName) || !isInlineStartToken(trackID) {
+		return ""
+	}
+	qualityValue = strings.TrimSpace(qualityValue)
+	if qualityValue == "" {
+		qualityValue = "hires"
+	}
+	if !isInlineStartToken(qualityValue) {
+		return ""
+	}
+	param := fmt.Sprintf("cache_%s_%s_%s", platformName, trackID, qualityValue)
+	if len(param) > 64 {
+		return ""
+	}
+	return param
 }
 
 // deriveBitrateFromFile derives bitrate and updates songInfo from actual file metrics.

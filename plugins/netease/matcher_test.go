@@ -126,8 +126,8 @@ func TestURLMatcherMatchURL(t *testing.T) {
 		{
 			name:      "single digit ID",
 			url:       "https://music.163.com/song?id=1",
-			wantID:    "1",
-			wantMatch: true,
+			wantID:    "",
+			wantMatch: false,
 		},
 		// Invalid URLs - wrong domain
 		{

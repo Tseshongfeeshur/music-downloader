@@ -8,13 +8,12 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	botpkg "github.com/liuran001/MusicBot-Go/bot"
 	"github.com/liuran001/MusicBot-Go/bot/platform"
+	"github.com/mymmrac/telego"
 )
 
-func extractPlatformTrack(message *models.Message, manager platform.Manager) (platformName, trackID string, found bool) {
+func extractPlatformTrack(message *telego.Message, manager platform.Manager) (platformName, trackID string, found bool) {
 	if message == nil || message.Text == "" {
 		return "", "", false
 	}
@@ -30,6 +29,7 @@ func extractPlatformTrack(message *models.Message, manager platform.Manager) (pl
 			}
 		}
 	}
+	text, _, _ = parseTrailingOptions(text)
 
 	if manager != nil {
 		if _, _, hasSuffix := parseSearchKeywordPlatform(text); hasSuffix {
@@ -46,22 +46,16 @@ func extractPlatformTrack(message *models.Message, manager platform.Manager) (pl
 	return "", "", false
 }
 
-func extractQualityOverride(message *models.Message) string {
+func extractQualityOverride(message *telego.Message) string {
 	if message == nil || message.Text == "" {
 		return ""
 	}
 	args := commandArguments(message.Text)
 	if args == "" {
-		return ""
+		args = message.Text
 	}
-	fields := strings.Fields(args)
-	if len(fields) < 3 {
-		return ""
-	}
-	if _, err := platform.ParseQuality(fields[2]); err == nil {
-		return fields[2]
-	}
-	return ""
+	_, _, quality := parseTrailingOptions(args)
+	return quality
 }
 
 func commandArguments(text string) string {
@@ -94,6 +88,72 @@ func commandName(text, botName string) string {
 		}
 	}
 	return command
+}
+
+func parseTrailingOptions(text string) (baseText, platformName, quality string) {
+	trimmed := strings.TrimSpace(text)
+	if trimmed == "" {
+		return "", "", ""
+	}
+	fields := strings.Fields(trimmed)
+	if len(fields) == 0 {
+		return "", "", ""
+	}
+	lastIdx := len(fields) - 1
+	qualityToken := normalizeQualityToken(strings.ToLower(fields[lastIdx]))
+	if qualityToken != "" {
+		if _, err := platform.ParseQuality(qualityToken); err == nil {
+			quality = qualityToken
+			fields = fields[:lastIdx]
+		}
+	}
+	if len(fields) > 0 {
+		last := normalizePlatformToken(strings.ToLower(fields[len(fields)-1]))
+		if mapped, ok := searchPlatformAliases[last]; ok {
+			platformName = mapped
+			fields = fields[:len(fields)-1]
+		}
+	}
+	baseText = strings.TrimSpace(strings.Join(fields, " "))
+	return baseText, platformName, quality
+}
+
+func normalizeQualityToken(token string) string {
+	switch strings.ToLower(strings.TrimSpace(token)) {
+	case "low":
+		return "standard"
+	case "standard", "high", "lossless", "hires":
+		return strings.ToLower(strings.TrimSpace(token))
+	default:
+		return ""
+	}
+}
+
+func normalizePlatformToken(token string) string {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return ""
+	}
+	return strings.TrimPrefix(token, "@")
+}
+
+func isLikelyIDToken(token string) bool {
+	token = strings.TrimSpace(token)
+	if token == "" {
+		return false
+	}
+	hasDigit := false
+	for _, ch := range token {
+		switch {
+		case ch >= '0' && ch <= '9':
+			hasDigit = true
+		case ch >= 'a' && ch <= 'z':
+		case ch >= 'A' && ch <= 'Z':
+		default:
+			return false
+		}
+	}
+	return hasDigit
 }
 
 func isNumeric(s string) bool {
@@ -257,7 +317,7 @@ func platformTag(platformName string) string {
 	return display
 }
 
-func fillSongInfoFromTrack(songInfo *botpkg.SongInfo, track *platform.Track, platformName, trackID string, message *models.Message) {
+func fillSongInfoFromTrack(songInfo *botpkg.SongInfo, track *platform.Track, platformName, trackID string, message *telego.Message) {
 	songInfo.Platform = platformName
 	songInfo.TrackID = trackID
 
@@ -317,8 +377,8 @@ func fillSongInfoFromTrack(songInfo *botpkg.SongInfo, track *platform.Track, pla
 
 type progressWriter struct {
 	ctx         context.Context
-	bot         *bot.Bot
-	msg         *models.Message
+	bot         *telego.Bot
+	msg         *telego.Message
 	total       int64
 	written     int64
 	lastUpdate  time.Time
@@ -348,9 +408,9 @@ func (pw *progressWriter) Write(p []byte) (n int, err error) {
 			return n, nil
 		}
 
-		_, err = pw.bot.EditMessageText(pw.ctx, &bot.EditMessageTextParams{
-			ChatID:    pw.msg.Chat.ID,
-			MessageID: pw.msg.ID,
+		_, err = pw.bot.EditMessageText(pw.ctx, &telego.EditMessageTextParams{
+			ChatID:    telego.ChatID{ID: pw.msg.Chat.ID},
+			MessageID: pw.msg.MessageID,
 			Text:      text,
 		})
 		if err == nil {

@@ -7,11 +7,10 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	botpkg "github.com/liuran001/MusicBot-Go/bot"
 	"github.com/liuran001/MusicBot-Go/bot/platform"
 	"github.com/liuran001/MusicBot-Go/bot/telegram"
+	"github.com/mymmrac/telego"
 )
 
 // StatusHandler handles /status command.
@@ -23,7 +22,7 @@ type StatusHandler struct {
 
 var statLimiter = make(chan struct{}, 1)
 
-func (h *StatusHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (h *StatusHandler) Handle(ctx context.Context, b *telego.Bot, update *telego.Update) {
 	if update == nil || update.Message == nil || h.Repo == nil {
 		return
 	}
@@ -82,11 +81,11 @@ func (h *StatusHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 		}
 	}
 
-	params := &bot.SendMessageParams{
-		ChatID:          message.Chat.ID,
+	params := &telego.SendMessageParams{
+		ChatID:          telego.ChatID{ID: message.Chat.ID},
 		Text:            msgText,
-		ParseMode:       models.ParseModeMarkdown,
-		ReplyParameters: &models.ReplyParameters{MessageID: message.ID},
+		ParseMode:       telego.ModeMarkdownV2,
+		ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
 	}
 	if h.RateLimiter != nil {
 		_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)

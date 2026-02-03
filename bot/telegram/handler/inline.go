@@ -7,10 +7,9 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	botpkg "github.com/liuran001/MusicBot-Go/bot"
 	"github.com/liuran001/MusicBot-Go/bot/platform"
+	"github.com/mymmrac/telego"
 )
 
 // InlineSearchHandler handles inline queries.
@@ -23,7 +22,7 @@ type InlineSearchHandler struct {
 	FallbackPlatform string
 }
 
-func (h *InlineSearchHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (h *InlineSearchHandler) Handle(ctx context.Context, b *telego.Bot, update *telego.Update) {
 	if update == nil || update.InlineQuery == nil {
 		return
 	}
@@ -55,7 +54,7 @@ func (h *InlineSearchHandler) Handle(ctx context.Context, b *bot.Bot, update *mo
 	}
 }
 
-func (h *InlineSearchHandler) inlineMusic(ctx context.Context, b *bot.Bot, query *models.InlineQuery, musicID int) {
+func (h *InlineSearchHandler) inlineMusic(ctx context.Context, b *telego.Bot, query *telego.InlineQuery, musicID int) {
 	if h.Repo == nil {
 		h.inlineEmpty(ctx, b, query)
 		return
@@ -67,72 +66,77 @@ func (h *InlineSearchHandler) inlineMusic(ctx context.Context, b *bot.Bot, query
 		return
 	}
 
-	inlineMsg := &models.InlineQueryResultArticle{
+	inlineMsg := &telego.InlineQueryResultArticle{
+		Type:                telego.ResultTypeArticle,
 		ID:                  query.ID,
 		Title:               noCache,
 		Description:         tapToDownload,
-		InputMessageContent: &models.InputTextMessageContent{MessageText: query.Query},
+		InputMessageContent: &telego.InputTextMessageContent{MessageText: query.Query},
 	}
-	_, _ = b.AnswerInlineQuery(ctx, &bot.AnswerInlineQueryParams{
+	_ = b.AnswerInlineQuery(ctx, &telego.AnswerInlineQueryParams{
 		InlineQueryID: query.ID,
 		IsPersonal:    false,
-		Results:       []models.InlineQueryResult{inlineMsg},
+		Results:       []telego.InlineQueryResult{inlineMsg},
 		CacheTime:     60,
-		Button:        &models.InlineQueryResultsButton{Text: tapMeToDown, StartParameter: fmt.Sprintf("%d", musicID)},
+		Button:        &telego.InlineQueryResultsButton{Text: tapMeToDown, StartParameter: fmt.Sprintf("%d", musicID)},
 	})
 }
 
-func (h *InlineSearchHandler) inlineEmpty(ctx context.Context, b *bot.Bot, query *models.InlineQuery) {
-	inlineMsg := &models.InlineQueryResultArticle{
+func (h *InlineSearchHandler) inlineEmpty(ctx context.Context, b *telego.Bot, query *telego.InlineQuery) {
+	inlineMsg := &telego.InlineQueryResultArticle{
+		Type:                telego.ResultTypeArticle,
 		ID:                  query.ID,
 		Title:               "输入 help 获取帮助",
 		Description:         "MusicBot-Go",
-		InputMessageContent: &models.InputTextMessageContent{MessageText: "MusicBot-Go"},
+		InputMessageContent: &telego.InputTextMessageContent{MessageText: "MusicBot-Go"},
 	}
-	_, _ = b.AnswerInlineQuery(ctx, &bot.AnswerInlineQueryParams{
+	_ = b.AnswerInlineQuery(ctx, &telego.AnswerInlineQueryParams{
 		InlineQueryID: query.ID,
 		IsPersonal:    false,
-		Results:       []models.InlineQueryResult{inlineMsg},
+		Results:       []telego.InlineQueryResult{inlineMsg},
 		CacheTime:     3600,
 	})
 }
 
-func (h *InlineSearchHandler) inlineHelp(ctx context.Context, b *bot.Bot, query *models.InlineQuery) {
+func (h *InlineSearchHandler) inlineHelp(ctx context.Context, b *telego.Bot, query *telego.InlineQuery) {
 	randomID := time.Now().UnixMicro()
-	inlineMsg1 := &models.InlineQueryResultArticle{
+	inlineMsg1 := &telego.InlineQueryResultArticle{
+		Type:                telego.ResultTypeArticle,
 		ID:                  fmt.Sprintf("%d", randomID),
 		Title:               "1.粘贴音乐分享URL或输入MusicID",
 		Description:         "MusicBot-Go",
-		InputMessageContent: &models.InputTextMessageContent{MessageText: "MusicBot-Go"},
+		InputMessageContent: &telego.InputTextMessageContent{MessageText: "MusicBot-Go"},
 	}
-	inlineMsg2 := &models.InlineQueryResultArticle{
+	inlineMsg2 := &telego.InlineQueryResultArticle{
+		Type:                telego.ResultTypeArticle,
 		ID:                  fmt.Sprintf("%d", randomID+1),
 		Title:               "2.输入 search+关键词 搜索歌曲",
 		Description:         "MusicBot-Go",
-		InputMessageContent: &models.InputTextMessageContent{MessageText: "MusicBot-Go"},
+		InputMessageContent: &telego.InputTextMessageContent{MessageText: "MusicBot-Go"},
 	}
-	_, _ = b.AnswerInlineQuery(ctx, &bot.AnswerInlineQueryParams{
+	_ = b.AnswerInlineQuery(ctx, &telego.AnswerInlineQueryParams{
 		InlineQueryID: query.ID,
 		IsPersonal:    false,
-		Results:       []models.InlineQueryResult{inlineMsg1, inlineMsg2},
+		Results:       []telego.InlineQueryResult{inlineMsg1, inlineMsg2},
 		CacheTime:     3600,
 	})
 }
 
-func (h *InlineSearchHandler) inlineSearch(ctx context.Context, b *bot.Bot, query *models.InlineQuery) {
+func (h *InlineSearchHandler) inlineSearch(ctx context.Context, b *telego.Bot, query *telego.InlineQuery) {
 	keyWord := strings.Replace(query.Query, "search", "", 1)
 	keyWord = strings.TrimSpace(keyWord)
 	if keyWord == "" {
-		inlineMsg := &models.InlineQueryResultArticle{
+		inlineMsg := &telego.InlineQueryResultArticle{
+			Type:                telego.ResultTypeArticle,
 			ID:                  fmt.Sprintf("%d", time.Now().UnixMicro()),
 			Title:               "请输入关键词",
 			Description:         "MusicBot-Go",
-			InputMessageContent: &models.InputTextMessageContent{MessageText: "MusicBot-Go"},
+			InputMessageContent: &telego.InputTextMessageContent{MessageText: "MusicBot-Go"},
 		}
-		_, _ = b.AnswerInlineQuery(ctx, &bot.AnswerInlineQueryParams{
+		_ = b.AnswerInlineQuery(ctx, &telego.AnswerInlineQueryParams{
 			InlineQueryID: query.ID,
 			IsPersonal:    false,
-			Results:       []models.InlineQueryResult{inlineMsg},
+			Results:       []telego.InlineQueryResult{inlineMsg},
 			CacheTime:     3600,
 		})
 		return
@@ -186,22 +190,23 @@ func (h *InlineSearchHandler) inlineSearch(ctx context.Context, b *bot.Bot, quer
 		}
 	}
 	if err != nil || len(tracks) == 0 {
-		inlineMsg := &models.InlineQueryResultArticle{
+		inlineMsg := &telego.InlineQueryResultArticle{
+			Type:                telego.ResultTypeArticle,
 			ID:                  fmt.Sprintf("%d", time.Now().UnixMicro()),
 			Title:               noResults,
 			Description:         noResults,
-			InputMessageContent: &models.InputTextMessageContent{MessageText: noResults},
+			InputMessageContent: &telego.InputTextMessageContent{MessageText: noResults},
 		}
-		_, _ = b.AnswerInlineQuery(ctx, &bot.AnswerInlineQueryParams{
+		_ = b.AnswerInlineQuery(ctx, &telego.AnswerInlineQueryParams{
 			InlineQueryID: query.ID,
 			IsPersonal:    false,
-			Results:       []models.InlineQueryResult{inlineMsg},
+			Results:       []telego.InlineQueryResult{inlineMsg},
 			CacheTime:     3600,
 		})
 		return
 	}
 
-	var inlineMsgs []models.InlineQueryResult
+	var inlineMsgs []telego.InlineQueryResult
 	for i := 0; i < len(tracks) && i < 10; i++ {
 		track := tracks[i]
 		var artistNames []string
@@ -210,15 +215,16 @@ func (h *InlineSearchHandler) inlineSearch(ctx context.Context, b *bot.Bot, quer
 		}
 		artistsStr := strings.Join(artistNames, "/")
 
-		inlineMsg := &models.InlineQueryResultArticle{
+		inlineMsg := &telego.InlineQueryResultArticle{
+			Type:                telego.ResultTypeArticle,
 			ID:                  fmt.Sprintf("%d", time.Now().UnixMicro()+int64(i)),
 			Title:               track.Title,
 			Description:         artistsStr,
-			InputMessageContent: &models.InputTextMessageContent{MessageText: fmt.Sprintf("/%s %s %s", platformName, track.ID, qualityValue)},
+			InputMessageContent: &telego.InputTextMessageContent{MessageText: fmt.Sprintf("/%s %s %s", platformName, track.ID, qualityValue)},
 		}
 		inlineMsgs = append(inlineMsgs, inlineMsg)
 	}
-	_, _ = b.AnswerInlineQuery(ctx, &bot.AnswerInlineQueryParams{
+	_ = b.AnswerInlineQuery(ctx, &telego.AnswerInlineQueryParams{
 		InlineQueryID: query.ID,
 		IsPersonal:    false,
 		Results:       inlineMsgs,
@@ -226,27 +232,32 @@ func (h *InlineSearchHandler) inlineSearch(ctx context.Context, b *bot.Bot, quer
 	})
 }
 
-func (h *InlineSearchHandler) inlineCommand(ctx context.Context, b *bot.Bot, query *models.InlineQuery, platformName, trackID string) {
+func (h *InlineSearchHandler) inlineCommand(ctx context.Context, b *telego.Bot, query *telego.InlineQuery, platformName, trackID string) {
 	if strings.TrimSpace(platformName) == "" || strings.TrimSpace(trackID) == "" {
 		h.inlineEmpty(ctx, b, query)
 		return
 	}
 	qualityValue := h.resolveDefaultQuality(ctx, query.From.ID)
-	inlineMsg := &models.InlineQueryResultArticle{
+	inlineMsg := &telego.InlineQueryResultArticle{
+		Type:                telego.ResultTypeArticle,
 		ID:                  fmt.Sprintf("%d", time.Now().UnixMicro()),
 		Title:               fmt.Sprintf("%s %s", platformEmoji(platformName), platformDisplayName(platformName)),
 		Description:         tapToDownload,
-		InputMessageContent: &models.InputTextMessageContent{MessageText: fmt.Sprintf("/%s %s %s", platformName, trackID, qualityValue)},
+		InputMessageContent: &telego.InputTextMessageContent{MessageText: fallbackInlineMessageText(query.Query, platformName, trackID, qualityValue)},
 	}
-	_, _ = b.AnswerInlineQuery(ctx, &bot.AnswerInlineQueryParams{
+	params := &telego.AnswerInlineQueryParams{
 		InlineQueryID: query.ID,
 		IsPersonal:    false,
-		Results:       []models.InlineQueryResult{inlineMsg},
+		Results:       []telego.InlineQueryResult{inlineMsg},
 		CacheTime:     60,
-	})
+	}
+	if startParam := buildInlineStartParameter(platformName, trackID, qualityValue); startParam != "" {
+		params.Button = &telego.InlineQueryResultsButton{Text: tapMeToDown, StartParameter: startParam}
+	}
+	_ = b.AnswerInlineQuery(ctx, params)
 }
 
-func (h *InlineSearchHandler) inlineCachedOrCommand(ctx context.Context, b *bot.Bot, query *models.InlineQuery, platformName, trackID string) bool {
+func (h *InlineSearchHandler) inlineCachedOrCommand(ctx context.Context, b *telego.Bot, query *telego.InlineQuery, platformName, trackID string) bool {
 	if strings.TrimSpace(platformName) == "" || strings.TrimSpace(trackID) == "" {
 		return false
 	}
@@ -259,7 +270,7 @@ func (h *InlineSearchHandler) inlineCachedOrCommand(ctx context.Context, b *bot.
 	return true
 }
 
-func (h *InlineSearchHandler) inlineCached(ctx context.Context, b *bot.Bot, query *models.InlineQuery, info *botpkg.SongInfo, platformFallback string) {
+func (h *InlineSearchHandler) inlineCached(ctx context.Context, b *telego.Bot, query *telego.InlineQuery, info *botpkg.SongInfo, platformFallback string) {
 	if info == nil {
 		return
 	}
@@ -284,47 +295,60 @@ func (h *InlineSearchHandler) inlineCached(ctx context.Context, b *bot.Bot, quer
 	if trackID == "" && platformName == "netease" && info.MusicID != 0 {
 		trackID = fmt.Sprintf("%d", info.MusicID)
 	}
+	songInfo := *info
+	if strings.TrimSpace(songInfo.TrackURL) == "" && platformName == "netease" && trackID != "" {
+		songInfo.TrackURL = fmt.Sprintf("https://music.163.com/song?id=%s", trackID)
+	}
 	commandQuery := ""
 	if trackID != "" {
 		commandQuery = fmt.Sprintf("/%s %s %s", platformName, trackID, qualityValue)
 	}
 
-	var rows [][]models.InlineKeyboardButton
-	linkURL := strings.TrimSpace(info.TrackURL)
-	if linkURL == "" && platformName == "netease" && info.MusicID != 0 {
-		linkURL = fmt.Sprintf("https://music.163.com/song?id=%d", info.MusicID)
-	}
+	var rows [][]telego.InlineKeyboardButton
+	linkURL := strings.TrimSpace(songInfo.TrackURL)
 	if linkURL != "" {
-		rows = append(rows, []models.InlineKeyboardButton{
-			{Text: fmt.Sprintf("%s- %s", info.SongName, info.SongArtists), URL: linkURL},
+		rows = append(rows, []telego.InlineKeyboardButton{
+			{Text: fmt.Sprintf("%s- %s", songInfo.SongName, songInfo.SongArtists), URL: linkURL},
 		})
 	}
 	if commandQuery != "" {
-		rows = append(rows, []models.InlineKeyboardButton{
-			{Text: sendMeTo, SwitchInlineQuery: commandQuery},
+		rows = append(rows, []telego.InlineKeyboardButton{
+			{Text: sendMeTo, SwitchInlineQuery: &commandQuery},
 		})
 	}
-	var keyboard *models.InlineKeyboardMarkup
+	var keyboard *telego.InlineKeyboardMarkup
 	if len(rows) > 0 {
-		keyboard = &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+		keyboard = &telego.InlineKeyboardMarkup{InlineKeyboard: rows}
 	}
 
-	infoLine := formatInlineInfoLine(platformName, info.FileExt, info.MusicSize+info.EmbPicSize, info.BitRate)
-	newAudio := &models.InlineQueryResultCachedDocument{
+	newAudio := &telego.InlineQueryResultCachedDocument{
+		Type:           telego.ResultTypeDocument,
 		ID:             query.ID,
 		DocumentFileID: info.FileID,
-		Title:          fmt.Sprintf("%s - %s", info.SongArtists, info.SongName),
-		Caption:        fmt.Sprintf(musicInfo, info.SongName, info.SongArtists, info.SongAlbum, infoLine, h.BotName),
+		Title:          fmt.Sprintf("%s - %s", songInfo.SongArtists, songInfo.SongName),
+		Caption:        buildMusicCaption(&songInfo, h.BotName),
+		ParseMode:      telego.ModeHTML,
 		ReplyMarkup:    keyboard,
-		Description:    info.SongAlbum,
+		Description:    songInfo.SongAlbum,
 	}
 
-	_, _ = b.AnswerInlineQuery(ctx, &bot.AnswerInlineQueryParams{
+	_ = b.AnswerInlineQuery(ctx, &telego.AnswerInlineQueryParams{
 		InlineQueryID: query.ID,
-		Results:       []models.InlineQueryResult{newAudio},
+		Results:       []telego.InlineQueryResult{newAudio},
 		IsPersonal:    false,
 		CacheTime:     3600,
 	})
+}
+
+func fallbackInlineMessageText(queryText, platformName, trackID, qualityValue string) string {
+	if strings.TrimSpace(queryText) != "" {
+		return queryText
+	}
+	return fmt.Sprintf("/%s %s %s", platformName, trackID, qualityValue)
+}
+
+func buildInlineStartParameter(platformName, trackID, qualityValue string) string {
+	return buildInlineStartParameterToken(platformName, trackID, qualityValue)
 }
 
 func (h *InlineSearchHandler) resolveDefaultQuality(ctx context.Context, userID int64) string {

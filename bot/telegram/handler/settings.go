@@ -5,11 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	botpkg "github.com/liuran001/MusicBot-Go/bot"
 	"github.com/liuran001/MusicBot-Go/bot/platform"
 	"github.com/liuran001/MusicBot-Go/bot/telegram"
+	"github.com/mymmrac/telego"
 )
 
 type SettingsHandler struct {
@@ -20,7 +19,7 @@ type SettingsHandler struct {
 	DefaultQuality  string
 }
 
-func (h *SettingsHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (h *SettingsHandler) Handle(ctx context.Context, b *telego.Bot, update *telego.Update) {
 	if update == nil || update.Message == nil || update.Message.From == nil {
 		return
 	}
@@ -32,8 +31,8 @@ func (h *SettingsHandler) Handle(ctx context.Context, b *bot.Bot, update *models
 	var err error
 	if message.Chat.Type != "private" {
 		if !isRequesterOrAdmin(ctx, b, message.Chat.ID, message.From.ID, 0) {
-			params := &bot.SendMessageParams{
-				ChatID: message.Chat.ID,
+			params := &telego.SendMessageParams{
+				ChatID: telego.ChatID{ID: message.Chat.ID},
 				Text:   "❌ 仅管理员可修改群组设置",
 			}
 			if h.RateLimiter != nil {
@@ -48,8 +47,8 @@ func (h *SettingsHandler) Handle(ctx context.Context, b *bot.Bot, update *models
 		settings, err = h.Repo.GetUserSettings(ctx, userID)
 	}
 	if err != nil {
-		params := &bot.SendMessageParams{
-			ChatID: message.Chat.ID,
+		params := &telego.SendMessageParams{
+			ChatID: telego.ChatID{ID: message.Chat.ID},
 			Text:   "❌ 获取设置失败，请稍后重试",
 		}
 		if h.RateLimiter != nil {
@@ -66,8 +65,8 @@ func (h *SettingsHandler) Handle(ctx context.Context, b *bot.Bot, update *models
 	text := h.buildSettingsText(chatType, settings, groupSettings, platforms)
 	keyboard := h.buildSettingsKeyboard(chatType, settings, groupSettings, platforms)
 
-	params := &bot.SendMessageParams{
-		ChatID:      message.Chat.ID,
+	params := &telego.SendMessageParams{
+		ChatID:      telego.ChatID{ID: message.Chat.ID},
 		Text:        text,
 		ReplyMarkup: keyboard,
 	}
@@ -121,8 +120,8 @@ func (h *SettingsHandler) buildSettingsText(chatType string, settings *botpkg.Us
 	return sb.String()
 }
 
-func (h *SettingsHandler) buildSettingsKeyboard(chatType string, settings *botpkg.UserSettings, groupSettings *botpkg.GroupSettings, platforms []string) *models.InlineKeyboardMarkup {
-	var rows [][]models.InlineKeyboardButton
+func (h *SettingsHandler) buildSettingsKeyboard(chatType string, settings *botpkg.UserSettings, groupSettings *botpkg.GroupSettings, platforms []string) *telego.InlineKeyboardMarkup {
+	var rows [][]telego.InlineKeyboardButton
 	platformValue := h.DefaultPlatform
 	qualityValue := h.DefaultQuality
 	if platformValue == "" {
@@ -142,7 +141,7 @@ func (h *SettingsHandler) buildSettingsKeyboard(chatType string, settings *botpk
 	}
 
 	if len(platforms) > 1 {
-		var platformButtons []models.InlineKeyboardButton
+		var platformButtons []telego.InlineKeyboardButton
 		for _, p := range platforms {
 			emoji := h.getPlatformEmoji(p)
 			displayName := h.getPlatformDisplayName(p)
@@ -153,7 +152,7 @@ func (h *SettingsHandler) buildSettingsKeyboard(chatType string, settings *botpk
 				text = "✓ " + text
 			}
 
-			platformButtons = append(platformButtons, models.InlineKeyboardButton{
+			platformButtons = append(platformButtons, telego.InlineKeyboardButton{
 				Text:         text,
 				CallbackData: callbackData,
 			})
@@ -161,14 +160,14 @@ func (h *SettingsHandler) buildSettingsKeyboard(chatType string, settings *botpk
 
 		for i := 0; i < len(platformButtons); i += 2 {
 			if i+1 < len(platformButtons) {
-				rows = append(rows, []models.InlineKeyboardButton{platformButtons[i], platformButtons[i+1]})
+				rows = append(rows, []telego.InlineKeyboardButton{platformButtons[i], platformButtons[i+1]})
 			} else {
-				rows = append(rows, []models.InlineKeyboardButton{platformButtons[i]})
+				rows = append(rows, []telego.InlineKeyboardButton{platformButtons[i]})
 			}
 		}
 	}
 
-	qualityButtons := []models.InlineKeyboardButton{
+	qualityButtons := []telego.InlineKeyboardButton{
 		{
 			Text:         h.formatQualityButton("standard", qualityValue == "standard"),
 			CallbackData: "settings quality standard",
@@ -180,7 +179,7 @@ func (h *SettingsHandler) buildSettingsKeyboard(chatType string, settings *botpk
 	}
 	rows = append(rows, qualityButtons)
 
-	qualityButtons2 := []models.InlineKeyboardButton{
+	qualityButtons2 := []telego.InlineKeyboardButton{
 		{
 			Text:         h.formatQualityButton("lossless", qualityValue == "lossless"),
 			CallbackData: "settings quality lossless",
@@ -192,7 +191,7 @@ func (h *SettingsHandler) buildSettingsKeyboard(chatType string, settings *botpk
 	}
 	rows = append(rows, qualityButtons2)
 
-	return &models.InlineKeyboardMarkup{InlineKeyboard: rows}
+	return &telego.InlineKeyboardMarkup{InlineKeyboard: rows}
 }
 
 func (h *SettingsHandler) formatQualityButton(quality string, isSelected bool) string {
@@ -249,7 +248,7 @@ type SettingsCallbackHandler struct {
 	RateLimiter     *telegram.RateLimiter
 }
 
-func (h *SettingsCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (h *SettingsCallbackHandler) Handle(ctx context.Context, b *telego.Bot, update *telego.Update) {
 	if update == nil || update.CallbackQuery == nil {
 		return
 	}
@@ -260,7 +259,10 @@ func (h *SettingsCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update
 	if len(args) < 3 {
 		return
 	}
-	msg := query.Message.Message
+	if query.Message == nil {
+		return
+	}
+	msg := query.Message.Message()
 
 	userID := query.From.ID
 	settingType := args[1]
@@ -271,7 +273,7 @@ func (h *SettingsCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update
 	var err error
 	if msg != nil && msg.Chat.Type != "private" {
 		if !isRequesterOrAdmin(ctx, b, msg.Chat.ID, query.From.ID, 0) {
-			_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			_ = b.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
 				CallbackQueryID: query.ID,
 				Text:            "❌ 仅管理员可修改群组设置",
 				ShowAlert:       true,
@@ -283,7 +285,7 @@ func (h *SettingsCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update
 		settings, err = h.Repo.GetUserSettings(ctx, userID)
 	}
 	if err != nil {
-		_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		_ = b.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: query.ID,
 			Text:            "❌ 获取设置失败",
 			ShowAlert:       true,
@@ -347,7 +349,7 @@ func (h *SettingsCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update
 	if changed {
 		if msg != nil && msg.Chat.Type != "private" {
 			if err := h.Repo.UpdateGroupSettings(ctx, groupSettings); err != nil {
-				_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+				_ = b.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
 					CallbackQueryID: query.ID,
 					Text:            "❌ 保存设置失败",
 					ShowAlert:       true,
@@ -355,7 +357,7 @@ func (h *SettingsCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update
 				return
 			}
 		} else if err := h.Repo.UpdateUserSettings(ctx, settings); err != nil {
-			_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+			_ = b.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
 				CallbackQueryID: query.ID,
 				Text:            "❌ 保存设置失败",
 				ShowAlert:       true,
@@ -363,7 +365,7 @@ func (h *SettingsCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update
 			return
 		}
 
-		_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		_ = b.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: query.ID,
 			Text:            responseText,
 		})
@@ -374,9 +376,9 @@ func (h *SettingsCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update
 			text := h.SettingsHandler.buildSettingsText(chatType, settings, groupSettings, platforms)
 			keyboard := h.SettingsHandler.buildSettingsKeyboard(chatType, settings, groupSettings, platforms)
 
-			params := &bot.EditMessageTextParams{
-				ChatID:      msg.Chat.ID,
-				MessageID:   msg.ID,
+			params := &telego.EditMessageTextParams{
+				ChatID:      telego.ChatID{ID: msg.Chat.ID},
+				MessageID:   msg.MessageID,
 				Text:        text,
 				ReplyMarkup: keyboard,
 			}
@@ -387,7 +389,7 @@ func (h *SettingsCallbackHandler) Handle(ctx context.Context, b *bot.Bot, update
 			}
 		}
 	} else {
-		_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		_ = b.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: query.ID,
 		})
 	}

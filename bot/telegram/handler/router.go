@@ -2,11 +2,12 @@ package handler
 
 import (
 	"context"
+	"regexp"
 	"strings"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	"github.com/liuran001/MusicBot-Go/bot/platform"
+	"github.com/mymmrac/telego"
+	th "github.com/mymmrac/telego/telegohandler"
 )
 
 // Router registers bot handlers and delegates to feature handlers.
@@ -27,23 +28,27 @@ type Router struct {
 	PlatformManager  platform.Manager
 }
 
-// Register registers all handlers to the bot.
-func (r *Router) Register(b *bot.Bot, botName string) {
-	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "start"), r.wrapMessage(r.Music))
-	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "help"), r.wrapMessage(r.Music))
-	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "music"), r.wrapMessage(r.Music))
-	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "netease"), r.wrapMessage(r.Music))
-	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "program"), r.wrapMessage(r.Music))
-	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "search"), r.wrapMessage(r.Search))
-	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "lyric"), r.wrapMessage(r.Lyric))
-	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "recognize"), r.wrapMessage(r.Recognize))
-	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "about"), r.wrapMessage(r.About))
-	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "status"), r.wrapMessage(r.Status))
-	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "settings"), r.wrapMessage(r.Settings))
-	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "rmcache"), r.wrapMessage(r.RmCache))
-	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "reload"), r.wrapMessage(r.Reload))
+// Register registers all handlers to the bot handler.
+func (r *Router) Register(bh *th.BotHandler, botName string) {
+	if bh == nil {
+		return
+	}
 
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+	bh.Handle(r.wrapMessage(r.Music), matchCommandFunc(botName, "start"))
+	bh.Handle(r.wrapMessage(r.Music), matchCommandFunc(botName, "help"))
+	bh.Handle(r.wrapMessage(r.Music), matchCommandFunc(botName, "music"))
+	bh.Handle(r.wrapMessage(r.Music), matchCommandFunc(botName, "netease"))
+	bh.Handle(r.wrapMessage(r.Music), matchCommandFunc(botName, "program"))
+	bh.Handle(r.wrapMessage(r.Search), matchCommandFunc(botName, "search"))
+	bh.Handle(r.wrapMessage(r.Lyric), matchCommandFunc(botName, "lyric"))
+	bh.Handle(r.wrapMessage(r.Recognize), matchCommandFunc(botName, "recognize"))
+	bh.Handle(r.wrapMessage(r.About), matchCommandFunc(botName, "about"))
+	bh.Handle(r.wrapMessage(r.Status), matchCommandFunc(botName, "status"))
+	bh.Handle(r.wrapMessage(r.Settings), matchCommandFunc(botName, "settings"))
+	bh.Handle(r.wrapMessage(r.RmCache), matchCommandFunc(botName, "rmcache"))
+	bh.Handle(r.wrapMessage(r.Reload), matchCommandFunc(botName, "reload"))
+
+	bh.Handle(r.wrapMessage(r.Music), func(ctx context.Context, update telego.Update) bool {
 		if update.Message == nil || update.Message.Text == "" {
 			return false
 		}
@@ -59,7 +64,7 @@ func (r *Router) Register(b *bot.Bot, botName string) {
 		if strings.Contains(command, "@") {
 			seg := strings.SplitN(command, "@", 2)
 			command = seg[0]
-			if len(seg) > 1 && seg[1] != "" && seg[1] != botName {
+			if len(seg) > 1 && seg[1] != "" && botName != "" && seg[1] != botName {
 				return false
 			}
 		}
@@ -71,28 +76,49 @@ func (r *Router) Register(b *bot.Bot, botName string) {
 			return false
 		}
 		return r.PlatformManager.Get(command) != nil
-	}, r.wrapMessage(r.Music))
+	})
 
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+	bh.Handle(r.wrapMessage(r.Music), func(ctx context.Context, update telego.Update) bool {
 		if update.Message == nil || update.Message.Text == "" {
 			return false
 		}
 		if hasSearchPlatformSuffix(update.Message.Text) {
 			return false
 		}
-		// Use PlatformManager for dynamic URL matching if available
+		if update.Message.Chat.Type != "private" {
+			if r.PlatformManager == nil {
+				return false
+			}
+			urls := extractURLs(update.Message.Text)
+			if len(urls) == 0 {
+				return false
+			}
+			for _, urlStr := range urls {
+				if plat, _, matched := r.PlatformManager.MatchURL(urlStr); matched {
+					return isAllowedGroupURLPlatform(plat)
+				}
+				if plat, _, matched := r.PlatformManager.MatchText(urlStr); matched {
+					return isAllowedGroupURLPlatform(plat)
+				}
+			}
+			return false
+		}
+		baseText, _, _ := parseTrailingOptions(update.Message.Text)
+		if strings.TrimSpace(baseText) == "" {
+			return false
+		}
 		if r.PlatformManager != nil {
-			if _, _, matched := r.PlatformManager.MatchText(update.Message.Text); matched {
+			if _, _, matched := r.PlatformManager.MatchText(baseText); matched {
 				return true
 			}
-			if _, _, matched := r.PlatformManager.MatchURL(update.Message.Text); matched {
+			if _, _, matched := r.PlatformManager.MatchURL(baseText); matched {
 				return true
 			}
 		}
 		return false
-	}, r.wrapMessage(r.Music))
+	})
 
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+	bh.Handle(r.wrapMessage(r.Search), func(ctx context.Context, update telego.Update) bool {
 		if update.Message == nil || update.Message.Text == "" || isCommandMessage(update.Message) {
 			return false
 		}
@@ -103,88 +129,106 @@ func (r *Router) Register(b *bot.Bot, botName string) {
 		if hasSearchPlatformSuffix(text) {
 			return true
 		}
-		// Use PlatformManager to exclude platform URLs if available
+		baseText, _, _ := parseTrailingOptions(text)
+		if strings.TrimSpace(baseText) == "" {
+			return false
+		}
 		if r.PlatformManager != nil {
-			if _, _, matched := r.PlatformManager.MatchText(text); matched {
+			if _, _, matched := r.PlatformManager.MatchText(baseText); matched {
 				return false
 			}
-			if _, _, matched := r.PlatformManager.MatchURL(text); matched {
+			if _, _, matched := r.PlatformManager.MatchURL(baseText); matched {
 				return false
 			}
 		}
 		return true
-	}, r.wrapMessage(r.Search))
+	})
 
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "music", bot.MatchTypePrefix, r.wrapCallback(r.Callback))
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "settings", bot.MatchTypePrefix, r.wrapCallback(r.SettingsCallback))
-	b.RegisterHandler(bot.HandlerTypeCallbackQueryData, "search", bot.MatchTypePrefix, r.wrapCallback(r.SearchCallback))
-	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
+	bh.Handle(r.wrapCallback(r.Callback), callbackPrefix("music"))
+	bh.Handle(r.wrapCallback(r.SettingsCallback), callbackPrefix("settings"))
+	bh.Handle(r.wrapCallback(r.SearchCallback), callbackPrefix("search"))
+	bh.Handle(r.wrapInline(r.Inline), func(ctx context.Context, update telego.Update) bool {
 		return update.InlineQuery != nil
-	}, r.wrapInline(r.Inline))
+	})
 
 	_ = botName
 }
 
-func (r *Router) wrapMessage(handler MessageHandler) bot.HandlerFunc {
-	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (r *Router) wrapMessage(handler MessageHandler) th.Handler {
+	return func(ctx *th.Context, update telego.Update) error {
 		if handler == nil {
-			return
+			return nil
 		}
-		handler.Handle(ctx, b, update)
+		handler.Handle(ctx, ctx.Bot(), &update)
+		return nil
 	}
 }
 
-func (r *Router) wrapInline(handler InlineHandler) bot.HandlerFunc {
-	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (r *Router) wrapInline(handler InlineHandler) th.Handler {
+	return func(ctx *th.Context, update telego.Update) error {
 		if handler == nil {
-			return
+			return nil
 		}
-		handler.Handle(ctx, b, update)
+		handler.Handle(ctx, ctx.Bot(), &update)
+		return nil
 	}
 }
 
-func (r *Router) wrapCallback(handler CallbackHandler) bot.HandlerFunc {
-	return func(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (r *Router) wrapCallback(handler CallbackHandler) th.Handler {
+	return func(ctx *th.Context, update telego.Update) error {
 		if handler == nil {
-			return
+			return nil
 		}
-		handler.Handle(ctx, b, update)
+		handler.Handle(ctx, ctx.Bot(), &update)
+		return nil
 	}
 }
 
-func isCommandMessage(message *models.Message) bool {
-	if message == nil || message.Text == "" {
+func callbackPrefix(prefix string) th.Predicate {
+	return func(ctx context.Context, update telego.Update) bool {
+		if update.CallbackQuery == nil {
+			return false
+		}
+		return strings.HasPrefix(update.CallbackQuery.Data, prefix)
+	}
+}
+
+func isCommandMessage(message *telego.Message) bool {
+	if message == nil || message.Entities == nil || message.Text == "" {
 		return false
 	}
-	if !strings.HasPrefix(message.Text, "/") {
+	if len(message.Entities) == 0 {
 		return false
 	}
-	for _, entity := range message.Entities {
-		if entity.Type == "bot_command" && entity.Offset == 0 {
-			return true
-		}
+	entity := message.Entities[0]
+	if entity.Type != "bot_command" || entity.Offset != 0 {
+		return false
 	}
-	return false
+	return true
 }
 
-func matchCommandFunc(botName, cmd string) func(update *models.Update) bool {
-	return func(update *models.Update) bool {
+func matchCommandFunc(botName, cmd string) th.Predicate {
+	return func(ctx context.Context, update telego.Update) bool {
 		if update.Message == nil || update.Message.Text == "" {
 			return false
 		}
-		text := strings.TrimSpace(update.Message.Text)
-		if !strings.HasPrefix(text, "/") {
+		messageText := update.Message.Text
+		if !strings.HasPrefix(messageText, "/") {
 			return false
 		}
-		parts := strings.SplitN(text, " ", 2)
+		parts := strings.SplitN(messageText, " ", 2)
 		command := strings.TrimPrefix(parts[0], "/")
-		if command == cmd {
-			return true
+		if command == "" {
+			return false
 		}
-		if botName != "" && command == cmd+"@"+botName {
-			return true
+		if strings.Contains(command, "@") {
+			seg := strings.SplitN(command, "@", 2)
+			command = seg[0]
+			if len(seg) > 1 && seg[1] != "" && botName != "" && seg[1] != botName {
+				return false
+			}
 		}
-		return false
+		return command == cmd
 	}
 }
 
@@ -210,6 +254,46 @@ func hasSearchPlatformSuffix(text string) bool {
 	if strings.TrimSpace(keyword) == "" {
 		return false
 	}
-	_, _, ok := parseSearchKeywordPlatform(keyword)
-	return ok
+	baseText, platformName, _ := parseTrailingOptions(keyword)
+	if strings.TrimSpace(platformName) == "" {
+		return false
+	}
+	if len(extractURLs(baseText)) > 0 {
+		return false
+	}
+	parts := strings.Fields(strings.TrimSpace(baseText))
+	if len(parts) == 1 && isLikelyIDToken(parts[0]) {
+		return false
+	}
+	return true
+}
+
+var urlPattern = regexp.MustCompile(`https?://[^\s]+`)
+
+func extractURLs(text string) []string {
+	text = strings.TrimSpace(text)
+	if text == "" {
+		return nil
+	}
+	matches := urlPattern.FindAllString(text, -1)
+	if len(matches) == 0 {
+		return nil
+	}
+	urls := make([]string, 0, len(matches))
+	for _, match := range matches {
+		cleaned := strings.TrimRight(match, ".,!?)]}>")
+		if cleaned != "" {
+			urls = append(urls, cleaned)
+		}
+	}
+	return urls
+}
+
+func isAllowedGroupURLPlatform(platformName string) bool {
+	switch platformName {
+	case "netease", "tencent", "qq", "qqmusic":
+		return true
+	default:
+		return false
+	}
 }

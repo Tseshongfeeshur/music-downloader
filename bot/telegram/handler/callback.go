@@ -5,10 +5,9 @@ import (
 	"strconv"
 	"strings"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	"github.com/liuran001/MusicBot-Go/bot/platform"
 	"github.com/liuran001/MusicBot-Go/bot/telegram"
+	"github.com/mymmrac/telego"
 )
 
 // CallbackMusicHandler handles callback queries for music buttons.
@@ -18,7 +17,7 @@ type CallbackMusicHandler struct {
 	RateLimiter *telegram.RateLimiter
 }
 
-func (h *CallbackMusicHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (h *CallbackMusicHandler) Handle(ctx context.Context, b *telego.Bot, update *telego.Update) {
 	if update == nil || update.CallbackQuery == nil {
 		return
 	}
@@ -71,7 +70,10 @@ func (h *CallbackMusicHandler) Handle(ctx context.Context, b *bot.Bot, update *m
 		}
 	}
 
-	msg := query.Message.Message
+	if query.Message == nil {
+		return
+	}
+	msg := query.Message.Message()
 	if msg == nil {
 		return
 	}
@@ -83,7 +85,7 @@ func (h *CallbackMusicHandler) Handle(ctx context.Context, b *bot.Bot, update *m
 	}
 
 	if chatType == "private" {
-		_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: query.ID, Text: callbackText})
+		_ = b.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID, Text: callbackText})
 		if h.Music != nil {
 			h.Music.dispatch(ctx, b, msgToUse, platformName, trackID, qualityOverride)
 		}
@@ -91,7 +93,7 @@ func (h *CallbackMusicHandler) Handle(ctx context.Context, b *bot.Bot, update *m
 	}
 
 	if !isRequesterOrAdmin(ctx, b, msg.Chat.ID, query.From.ID, requesterID) {
-		_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{
+		_ = b.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{
 			CallbackQueryID: query.ID,
 			Text:            callbackDenied,
 			ShowAlert:       true,
@@ -99,28 +101,29 @@ func (h *CallbackMusicHandler) Handle(ctx context.Context, b *bot.Bot, update *m
 		return
 	}
 
-	_, _ = b.AnswerCallbackQuery(ctx, &bot.AnswerCallbackQueryParams{CallbackQueryID: query.ID, Text: callbackText})
+	_ = b.AnswerCallbackQuery(ctx, &telego.AnswerCallbackQueryParams{CallbackQueryID: query.ID, Text: callbackText})
 	if h.Music != nil {
 		h.Music.dispatch(ctx, b, msgToUse, platformName, trackID, qualityOverride)
 	}
-	deleteParams := &bot.DeleteMessageParams{ChatID: msg.Chat.ID, MessageID: msg.ID}
+	deleteParams := &telego.DeleteMessageParams{ChatID: telego.ChatID{ID: msg.Chat.ID}, MessageID: msg.MessageID}
 	if h.RateLimiter != nil {
 		_ = telegram.DeleteMessageWithRetry(ctx, h.RateLimiter, b, deleteParams)
 	} else {
-		_, _ = b.DeleteMessage(ctx, deleteParams)
+		_ = b.DeleteMessage(ctx, deleteParams)
 	}
 }
 
-func isRequesterOrAdmin(ctx context.Context, b *bot.Bot, chatID int64, userID int64, requesterID int64) bool {
+func isRequesterOrAdmin(ctx context.Context, b *telego.Bot, chatID int64, userID int64, requesterID int64) bool {
 	if requesterID != 0 && requesterID == userID {
 		return true
 	}
 	if b == nil {
 		return false
 	}
-	member, err := b.GetChatMember(ctx, &bot.GetChatMemberParams{ChatID: chatID, UserID: userID})
+	member, err := b.GetChatMember(ctx, &telego.GetChatMemberParams{ChatID: telego.ChatID{ID: chatID}, UserID: userID})
 	if err != nil || member == nil {
 		return false
 	}
-	return member.Type == models.ChatMemberTypeOwner || member.Type == models.ChatMemberTypeAdministrator
+	status := member.MemberStatus()
+	return status == telego.MemberStatusCreator || status == telego.MemberStatusAdministrator
 }

@@ -7,8 +7,6 @@ import (
 	"strings"
 	"time"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	"github.com/liuran001/MusicBot-Go/bot/config"
 	"github.com/liuran001/MusicBot-Go/bot/db"
 	"github.com/liuran001/MusicBot-Go/bot/download"
@@ -21,6 +19,8 @@ import (
 	"github.com/liuran001/MusicBot-Go/bot/telegram"
 	"github.com/liuran001/MusicBot-Go/bot/telegram/handler"
 	"github.com/liuran001/MusicBot-Go/bot/worker"
+	"github.com/mymmrac/telego"
+	th "github.com/mymmrac/telego/telegohandler"
 	gormlogger "gorm.io/gorm/logger"
 )
 
@@ -38,6 +38,7 @@ type App struct {
 	RecognizeService recognize.Service
 	TagProviders     map[string]id3.ID3TagProvider
 	Build            BuildInfo
+	botHandler       *th.BotHandler
 }
 
 func registerContribution(
@@ -208,7 +209,7 @@ func (a *App) Start(ctx context.Context) error {
 			a.Logger.Error("getMe failed", "error", err)
 		}
 	}
-	botName := ""
+	botName := strings.TrimSpace(a.Telegram.Client().Username())
 	if me != nil {
 		botName = me.Username
 	}
@@ -310,9 +311,19 @@ func (a *App) Start(ctx context.Context) error {
 		PlatformManager:  a.PlatformManager,
 	}
 
-	router.Register(a.Telegram.Client(), botName)
+	updates, err := a.Telegram.Client().UpdatesViaLongPolling(ctx, nil)
+	if err != nil {
+		return fmt.Errorf("init telegram: %w", err)
+	}
+	botHandler, err := th.NewBotHandler(a.Telegram.Client(), updates)
+	if err != nil {
+		return fmt.Errorf("init telegram: %w", err)
+	}
+	a.botHandler = botHandler
 
-	commands := []models.BotCommand{
+	router.Register(botHandler, botName)
+
+	commands := []telego.BotCommand{
 		{Command: "help", Description: "查看使用说明"},
 		{Command: "music", Description: "下载音乐"},
 		{Command: "search", Description: "搜索音乐"},
@@ -322,11 +333,13 @@ func (a *App) Start(ctx context.Context) error {
 		{Command: "status", Description: "查看统计信息"},
 		{Command: "about", Description: "关于本 Bot"},
 	}
-	_, _ = a.Telegram.Client().SetMyCommands(ctx, &bot.SetMyCommandsParams{
+	_ = a.Telegram.Client().SetMyCommands(ctx, &telego.SetMyCommandsParams{
 		Commands: commands,
 	})
 
-	go a.Telegram.Start(ctx)
+	go func() {
+		_ = botHandler.Start()
+	}()
 	return nil
 }
 
@@ -393,6 +406,18 @@ func splitAdminIDs(raw string) []string {
 // Shutdown releases resources.
 func (a *App) Shutdown(ctx context.Context) error {
 	var firstErr error
+
+	if a.botHandler != nil {
+		if err := a.botHandler.StopWithContext(ctx); err != nil {
+			if a.Logger != nil {
+				a.Logger.Error("failed to stop telegram handler", "error", err)
+			}
+			if firstErr == nil {
+				firstErr = fmt.Errorf("stop telegram handler: %w", err)
+			}
+		}
+		a.botHandler = nil
+	}
 
 	if a.RecognizeService != nil {
 		if err := a.RecognizeService.Stop(); err != nil {

@@ -3,10 +3,9 @@ package handler
 import (
 	"context"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	logpkg "github.com/liuran001/MusicBot-Go/bot/logger"
 	"github.com/liuran001/MusicBot-Go/bot/telegram"
+	"github.com/mymmrac/telego"
 )
 
 // ReloadHandler handles /reload command for dynamic plugins.
@@ -17,7 +16,7 @@ type ReloadHandler struct {
 	AdminIDs    map[int64]struct{}
 }
 
-func (h *ReloadHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (h *ReloadHandler) Handle(ctx context.Context, b *telego.Bot, update *telego.Update) {
 	if update == nil || update.Message == nil || update.Message.From == nil {
 		return
 	}
@@ -28,8 +27,8 @@ func (h *ReloadHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 	}
 
 	if h.Reload == nil {
-		params := &bot.SendMessageParams{
-			ChatID: message.Chat.ID,
+		params := &telego.SendMessageParams{
+			ChatID: telego.ChatID{ID: message.Chat.ID},
 			Text:   "❌ 重载未启用",
 		}
 		if h.RateLimiter != nil {
@@ -44,8 +43,8 @@ func (h *ReloadHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 		if h.Logger != nil {
 			h.Logger.Error("reload failed", "error", err)
 		}
-		params := &bot.SendMessageParams{
-			ChatID: message.Chat.ID,
+		params := &telego.SendMessageParams{
+			ChatID: telego.ChatID{ID: message.Chat.ID},
 			Text:   "❌ 重载失败: " + err.Error(),
 		}
 		if h.RateLimiter != nil {
@@ -56,8 +55,8 @@ func (h *ReloadHandler) Handle(ctx context.Context, b *bot.Bot, update *models.U
 		return
 	}
 
-	params := &bot.SendMessageParams{
-		ChatID: message.Chat.ID,
+	params := &telego.SendMessageParams{
+		ChatID: telego.ChatID{ID: message.Chat.ID},
 		Text:   "✅ 动态插件已重载",
 	}
 	if h.RateLimiter != nil {

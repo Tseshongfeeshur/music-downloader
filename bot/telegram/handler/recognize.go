@@ -11,11 +11,10 @@ import (
 	"path/filepath"
 	"time"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	logpkg "github.com/liuran001/MusicBot-Go/bot/logger"
 	"github.com/liuran001/MusicBot-Go/bot/recognize"
 	"github.com/liuran001/MusicBot-Go/bot/telegram"
+	"github.com/mymmrac/telego"
 )
 
 // RecognizeHandler handles voice recognition.
@@ -27,26 +26,26 @@ type RecognizeHandler struct {
 	Logger           *logpkg.Logger
 }
 
-func (h *RecognizeHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (h *RecognizeHandler) Handle(ctx context.Context, b *telego.Bot, update *telego.Update) {
 	if update == nil || update.Message == nil {
 		return
 	}
 	message := update.Message
 	chatID := message.Chat.ID
-	replyID := message.ID
+	replyID := message.MessageID
 
 	if message.ReplyToMessage == nil || message.ReplyToMessage.Voice == nil {
 		sendText(ctx, b, chatID, replyID, "请回复一条语音留言")
 		return
 	}
-	replyID = message.ReplyToMessage.ID
+	replyID = message.ReplyToMessage.MessageID
 
 	if h.CacheDir == "" {
 		h.CacheDir = "./cache"
 	}
 	ensureDir(h.CacheDir)
 
-	fileInfo, err := b.GetFile(ctx, &bot.GetFileParams{FileID: message.ReplyToMessage.Voice.FileID})
+	fileInfo, err := b.GetFile(ctx, &telego.GetFileParams{FileID: message.ReplyToMessage.Voice.FileID})
 	if err != nil || fileInfo == nil || fileInfo.FilePath == "" {
 		sendText(ctx, b, chatID, replyID, "获取语音失败，请稍后重试")
 		return
@@ -55,7 +54,7 @@ func (h *RecognizeHandler) Handle(ctx context.Context, b *bot.Bot, update *model
 		sendText(ctx, b, chatID, replyID, "语音过大，无法识别")
 		return
 	}
-	fileURL := b.FileDownloadLink(fileInfo)
+	fileURL := b.FileDownloadURL(fileInfo.FilePath)
 
 	client := &http.Client{Timeout: 30 * time.Second}
 	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
@@ -116,10 +115,10 @@ func (h *RecognizeHandler) Handle(ctx context.Context, b *bot.Bot, update *model
 	}
 
 	if result.URL != "" {
-		params := &bot.SendMessageParams{
-			ChatID:          chatID,
+		params := &telego.SendMessageParams{
+			ChatID:          telego.ChatID{ID: chatID},
 			Text:            result.URL,
-			ReplyParameters: &models.ReplyParameters{MessageID: replyID},
+			ReplyParameters: &telego.ReplyParameters{MessageID: replyID},
 		}
 		if h.RateLimiter != nil {
 			_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)
@@ -133,14 +132,14 @@ func (h *RecognizeHandler) Handle(ctx context.Context, b *bot.Bot, update *model
 	}
 }
 
-func sendText(ctx context.Context, b *bot.Bot, chatID int64, replyID int, text string) {
+func sendText(ctx context.Context, b *telego.Bot, chatID int64, replyID int, text string) {
 	if b == nil {
 		return
 	}
-	params := &bot.SendMessageParams{
-		ChatID:          chatID,
+	params := &telego.SendMessageParams{
+		ChatID:          telego.ChatID{ID: chatID},
 		Text:            text,
-		ReplyParameters: &models.ReplyParameters{MessageID: replyID},
+		ReplyParameters: &telego.ReplyParameters{MessageID: replyID},
 	}
 	_, _ = b.SendMessage(ctx, params)
 }

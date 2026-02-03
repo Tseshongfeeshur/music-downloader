@@ -5,10 +5,9 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	"github.com/liuran001/MusicBot-Go/bot/dynplugin"
 	"github.com/liuran001/MusicBot-Go/bot/telegram"
+	"github.com/mymmrac/telego"
 )
 
 // AboutHandler handles /about command.
@@ -22,7 +21,7 @@ type AboutHandler struct {
 	RateLimiter *telegram.RateLimiter
 }
 
-func (h *AboutHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (h *AboutHandler) Handle(ctx context.Context, b *telego.Bot, update *telego.Update) {
 	if update == nil || update.Message == nil {
 		return
 	}
@@ -32,11 +31,11 @@ func (h *AboutHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Up
 	buildArchText := mdV2Replacer.Replace(h.BuildArch)
 	pluginText := h.pluginSummary()
 	msg := fmt.Sprintf(aboutText, versionText, runtimeText, buildTimeText, buildArchText, pluginText)
-	params := &bot.SendMessageParams{
-		ChatID:          update.Message.Chat.ID,
+	params := &telego.SendMessageParams{
+		ChatID:          telego.ChatID{ID: update.Message.Chat.ID},
 		Text:            msg,
-		ParseMode:       models.ParseModeMarkdown,
-		ReplyParameters: &models.ReplyParameters{MessageID: update.Message.ID},
+		ParseMode:       telego.ModeMarkdownV2,
+		ReplyParameters: &telego.ReplyParameters{MessageID: update.Message.MessageID},
 	}
 	if h.RateLimiter != nil {
 		_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)

@@ -5,11 +5,10 @@ import (
 	"fmt"
 	"strings"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
 	botpkg "github.com/liuran001/MusicBot-Go/bot"
 	"github.com/liuran001/MusicBot-Go/bot/platform"
 	"github.com/liuran001/MusicBot-Go/bot/telegram"
+	"github.com/mymmrac/telego"
 )
 
 // RmCacheHandler handles /rmcache command.
@@ -20,20 +19,20 @@ type RmCacheHandler struct {
 	AdminIDs        map[int64]struct{}
 }
 
-func (h *RmCacheHandler) Handle(ctx context.Context, b *bot.Bot, update *models.Update) {
+func (h *RmCacheHandler) Handle(ctx context.Context, b *telego.Bot, update *telego.Update) {
 	if update == nil || update.Message == nil || h.Repo == nil {
 		return
 	}
 	message := update.Message
-	if !isBotAdmin(h.AdminIDs, message.From.ID) {
+	if message.From == nil || !isBotAdmin(h.AdminIDs, message.From.ID) {
 		return
 	}
 	args := commandArguments(message.Text)
 	if args == "" {
-		params := &bot.SendMessageParams{
-			ChatID:          message.Chat.ID,
+		params := &telego.SendMessageParams{
+			ChatID:          telego.ChatID{ID: message.Chat.ID},
 			Text:            inputIDorKeyword,
-			ReplyParameters: &models.ReplyParameters{MessageID: message.ID},
+			ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
 		}
 		if h.RateLimiter != nil {
 			_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)
@@ -44,10 +43,10 @@ func (h *RmCacheHandler) Handle(ctx context.Context, b *bot.Bot, update *models.
 	}
 	if strings.EqualFold(strings.TrimSpace(args), "all") {
 		if err := h.Repo.DeleteAll(ctx); err != nil {
-			params := &bot.SendMessageParams{
-				ChatID:          message.Chat.ID,
+			params := &telego.SendMessageParams{
+				ChatID:          telego.ChatID{ID: message.Chat.ID},
 				Text:            "清除缓存失败",
-				ReplyParameters: &models.ReplyParameters{MessageID: message.ID},
+				ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
 			}
 			if h.RateLimiter != nil {
 				_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)
@@ -56,10 +55,10 @@ func (h *RmCacheHandler) Handle(ctx context.Context, b *bot.Bot, update *models.
 			}
 			return
 		}
-		params := &bot.SendMessageParams{
-			ChatID:          message.Chat.ID,
+		params := &telego.SendMessageParams{
+			ChatID:          telego.ChatID{ID: message.Chat.ID},
 			Text:            "已清空所有缓存",
-			ReplyParameters: &models.ReplyParameters{MessageID: message.ID},
+			ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
 		}
 		if h.RateLimiter != nil {
 			_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)
@@ -80,10 +79,10 @@ func (h *RmCacheHandler) Handle(ctx context.Context, b *bot.Bot, update *models.
 			if plat != nil {
 				err := h.Repo.DeleteAllQualitiesByPlatformTrackID(ctx, platformName, trackID)
 				if err != nil {
-					params := &bot.SendMessageParams{
-						ChatID:          message.Chat.ID,
+					params := &telego.SendMessageParams{
+						ChatID:          telego.ChatID{ID: message.Chat.ID},
 						Text:            "清除缓存失败",
-						ReplyParameters: &models.ReplyParameters{MessageID: message.ID},
+						ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
 					}
 					if h.RateLimiter != nil {
 						_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)
@@ -92,10 +91,10 @@ func (h *RmCacheHandler) Handle(ctx context.Context, b *bot.Bot, update *models.
 					}
 					return
 				}
-				params := &bot.SendMessageParams{
-					ChatID:          message.Chat.ID,
+				params := &telego.SendMessageParams{
+					ChatID:          telego.ChatID{ID: message.Chat.ID},
 					Text:            fmt.Sprintf("已清除平台 %s 歌曲 %s 的缓存", platformName, trackID),
-					ReplyParameters: &models.ReplyParameters{MessageID: message.ID},
+					ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
 				}
 				if h.RateLimiter != nil {
 					_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)
@@ -109,10 +108,10 @@ func (h *RmCacheHandler) Handle(ctx context.Context, b *bot.Bot, update *models.
 	if h.PlatformManager != nil {
 		if platformName, trackID, matched := h.PlatformManager.MatchText(args); matched {
 			if err := h.Repo.DeleteAllQualitiesByPlatformTrackID(ctx, platformName, trackID); err == nil {
-				params := &bot.SendMessageParams{
-					ChatID:          message.Chat.ID,
+				params := &telego.SendMessageParams{
+					ChatID:          telego.ChatID{ID: message.Chat.ID},
 					Text:            fmt.Sprintf("已清除平台 %s 歌曲 %s 的缓存", platformName, trackID),
-					ReplyParameters: &models.ReplyParameters{MessageID: message.ID},
+					ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
 				}
 				if h.RateLimiter != nil {
 					_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)
@@ -121,10 +120,10 @@ func (h *RmCacheHandler) Handle(ctx context.Context, b *bot.Bot, update *models.
 				}
 				return
 			}
-			params := &bot.SendMessageParams{
-				ChatID:          message.Chat.ID,
+			params := &telego.SendMessageParams{
+				ChatID:          telego.ChatID{ID: message.Chat.ID},
 				Text:            "清除缓存失败",
-				ReplyParameters: &models.ReplyParameters{MessageID: message.ID},
+				ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
 			}
 			if h.RateLimiter != nil {
 				_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)
@@ -135,10 +134,10 @@ func (h *RmCacheHandler) Handle(ctx context.Context, b *bot.Bot, update *models.
 		}
 		if platformName, trackID, matched := h.PlatformManager.MatchURL(args); matched {
 			if err := h.Repo.DeleteAllQualitiesByPlatformTrackID(ctx, platformName, trackID); err == nil {
-				params := &bot.SendMessageParams{
-					ChatID:          message.Chat.ID,
+				params := &telego.SendMessageParams{
+					ChatID:          telego.ChatID{ID: message.Chat.ID},
 					Text:            fmt.Sprintf("已清除平台 %s 歌曲 %s 的缓存", platformName, trackID),
-					ReplyParameters: &models.ReplyParameters{MessageID: message.ID},
+					ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
 				}
 				if h.RateLimiter != nil {
 					_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)
@@ -147,10 +146,10 @@ func (h *RmCacheHandler) Handle(ctx context.Context, b *bot.Bot, update *models.
 				}
 				return
 			}
-			params := &bot.SendMessageParams{
-				ChatID:          message.Chat.ID,
+			params := &telego.SendMessageParams{
+				ChatID:          telego.ChatID{ID: message.Chat.ID},
 				Text:            "清除缓存失败",
-				ReplyParameters: &models.ReplyParameters{MessageID: message.ID},
+				ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
 			}
 			if h.RateLimiter != nil {
 				_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)
@@ -160,10 +159,10 @@ func (h *RmCacheHandler) Handle(ctx context.Context, b *bot.Bot, update *models.
 			return
 		}
 	}
-	params := &bot.SendMessageParams{
-		ChatID:          message.Chat.ID,
+	params := &telego.SendMessageParams{
+		ChatID:          telego.ChatID{ID: message.Chat.ID},
 		Text:            "请输入有效的歌曲ID或URL，或使用格式: /rmcache <platform> <trackID>",
-		ReplyParameters: &models.ReplyParameters{MessageID: message.ID},
+		ReplyParameters: &telego.ReplyParameters{MessageID: message.MessageID},
 	}
 	if h.RateLimiter != nil {
 		_, _ = telegram.SendMessageWithRetry(ctx, h.RateLimiter, b, params)

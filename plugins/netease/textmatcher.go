@@ -1,6 +1,7 @@
 package netease
 
 import (
+	"crypto/tls"
 	"net/http"
 	"net/url"
 	"regexp"
@@ -80,12 +81,17 @@ func parseMusicID(text string) int {
 		parsed, err := url.Parse(urlStr)
 		if err == nil {
 			id := parsed.Query().Get("id")
-			if musicID, _ := strconv.Atoi(id); musicID != 0 {
-				return musicID
+			if len(id) >= 5 {
+				if musicID, _ := strconv.Atoi(id); musicID != 0 {
+					return musicID
+				}
 			}
 		}
 	}
 	if !isDigits(messageText) {
+		return 0
+	}
+	if len(messageText) < 5 {
 		return 0
 	}
 	musicID, _ := strconv.Atoi(messageText)
@@ -145,12 +151,21 @@ func resolveShortURL(text string) string {
 	if !strings.Contains(urlStr, "163cn.tv") && !strings.Contains(urlStr, "163cn.link") {
 		return ""
 	}
+	parsed, err := url.Parse(urlStr)
+	if err != nil {
+		return ""
+	}
 	req, err := http.NewRequest("GET", urlStr, nil)
 	if err != nil {
 		return ""
 	}
+	transport := &http.Transport{}
+	if host := strings.ToLower(parsed.Hostname()); host == "163cn.link" || host == "163cn.tv" {
+		transport.TLSClientConfig = &tls.Config{InsecureSkipVerify: true}
+	}
 	client := &http.Client{
-		Timeout: 10 * time.Second,
+		Transport: transport,
+		Timeout:   10 * time.Second,
 		CheckRedirect: func(req *http.Request, via []*http.Request) error {
 			return http.ErrUseLastResponse
 		},

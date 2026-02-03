@@ -8,8 +8,7 @@ import (
 	"sync"
 	"time"
 
-	"github.com/go-telegram/bot"
-	"github.com/go-telegram/bot/models"
+	"github.com/mymmrac/telego"
 	"golang.org/x/time/rate"
 )
 
@@ -146,6 +145,19 @@ func extractChatID(chatID any) int64 {
 		return v
 	case int:
 		return int64(v)
+	case telego.ChatID:
+		if v.ID != 0 {
+			return v.ID
+		}
+		return 0
+	case *telego.ChatID:
+		if v == nil {
+			return 0
+		}
+		if v.ID != 0 {
+			return v.ID
+		}
+		return 0
 	case string:
 		id, _ := strconv.ParseInt(v, 10, 64)
 		return id
@@ -154,8 +166,8 @@ func extractChatID(chatID any) int64 {
 	}
 }
 
-func SendMessageWithRetry(ctx context.Context, rl *RateLimiter, b *bot.Bot, params *bot.SendMessageParams) (*models.Message, error) {
-	var result *models.Message
+func SendMessageWithRetry(ctx context.Context, rl *RateLimiter, b *telego.Bot, params *telego.SendMessageParams) (*telego.Message, error) {
+	var result *telego.Message
 	var lastErr error
 
 	chatID := extractChatID(params.ChatID)
@@ -178,8 +190,8 @@ func SendMessageWithRetry(ctx context.Context, rl *RateLimiter, b *bot.Bot, para
 	return result, nil
 }
 
-func EditMessageTextWithRetry(ctx context.Context, rl *RateLimiter, b *bot.Bot, params *bot.EditMessageTextParams) (*models.Message, error) {
-	var result *models.Message
+func EditMessageTextWithRetry(ctx context.Context, rl *RateLimiter, b *telego.Bot, params *telego.EditMessageTextParams) (*telego.Message, error) {
+	var result *telego.Message
 	var lastErr error
 
 	chatID := extractChatID(params.ChatID)
@@ -202,11 +214,10 @@ func EditMessageTextWithRetry(ctx context.Context, rl *RateLimiter, b *bot.Bot, 
 	return result, nil
 }
 
-func DeleteMessageWithRetry(ctx context.Context, rl *RateLimiter, b *bot.Bot, params *bot.DeleteMessageParams) error {
+func DeleteMessageWithRetry(ctx context.Context, rl *RateLimiter, b *telego.Bot, params *telego.DeleteMessageParams) error {
 	chatID := extractChatID(params.ChatID)
 	err := WithRetry(ctx, rl, chatID, func() error {
-		_, err := b.DeleteMessage(ctx, params)
-		return err
+		return b.DeleteMessage(ctx, params)
 	})
 
 	if err != nil && rl != nil {
@@ -215,8 +226,8 @@ func DeleteMessageWithRetry(ctx context.Context, rl *RateLimiter, b *bot.Bot, pa
 	return err
 }
 
-func SendAudioWithRetry(ctx context.Context, rl *RateLimiter, b *bot.Bot, params *bot.SendAudioParams) (*models.Message, error) {
-	var result *models.Message
+func SendAudioWithRetry(ctx context.Context, rl *RateLimiter, b *telego.Bot, params *telego.SendAudioParams) (*telego.Message, error) {
+	var result *telego.Message
 	var lastErr error
 
 	chatID := extractChatID(params.ChatID)
