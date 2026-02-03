@@ -81,6 +81,7 @@ func setDefaults(v *viper.Viper) {
 	v.SetDefault("DownloadConcurrency", 4)
 	v.SetDefault("UploadConcurrency", 1)
 	v.SetDefault("UploadQueueSize", 20)
+	v.SetDefault("PluginScriptDir", "./plugins/scripts")
 }
 
 // GetString returns a string value.

@@ -16,6 +16,7 @@ MusicBot-Go/
 │   │   ├── models.go            # 数据模型定义
 │   │   └── repository.go        # 数据访问接口实现
 │   ├── logger/                  # 日志系统 (slog)
+│   ├── dynplugin/               # 动态脚本插件加载 (yaegi)
 │   ├── platform/                # 平台抽象层
 │   │   ├── interface.go         # Platform 核心接口定义
 │   │   ├── manager.go           # 平台管理器 (路由和调度)
@@ -39,6 +40,7 @@ MusicBot-Go/
 │   └── types.go                 # 全局类型定义
 └── plugins/                     # 平台插件
     ├── all/                     # 插件聚合 (空白导入)
+    ├── scripts/                 # 动态脚本插件
     └── netease/                 # 网易云音乐插件
         ├── client.go            # API 客户端
         ├── platform.go          # Platform 接口实现

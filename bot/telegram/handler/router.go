@@ -19,6 +19,7 @@ type Router struct {
 	Status           MessageHandler
 	RmCache          MessageHandler
 	Settings         MessageHandler
+	Reload           MessageHandler
 	Callback         CallbackHandler
 	SettingsCallback CallbackHandler
 	SearchCallback   CallbackHandler
@@ -39,6 +40,7 @@ func (r *Router) Register(b *bot.Bot, botName string) {
 	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "status"), r.wrapMessage(r.Status))
 	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "settings"), r.wrapMessage(r.Settings))
 	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "rmcache"), r.wrapMessage(r.RmCache))
+	b.RegisterHandlerMatchFunc(matchCommandFunc(botName, "reload"), r.wrapMessage(r.Reload))
 
 	b.RegisterHandlerMatchFunc(func(update *models.Update) bool {
 		if update.Message == nil || update.Message.Text == "" {
@@ -182,6 +184,8 @@ func matchCommandFunc(botName, cmd string) func(update *models.Update) bool {
 func isReservedCommand(command string) bool {
 	switch command {
 	case "start", "music", "netease", "program", "search", "lyric", "recognize", "about", "status", "settings", "rmcache":
+		return true
+	case "reload":
 		return true
 	default:
 		return false

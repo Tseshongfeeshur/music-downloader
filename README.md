@@ -63,6 +63,7 @@ go build -o MusicBot-Go
 - `/recognize` - 识别语音中的歌曲 (回复语音消息)
 - `/status` - 查看 Bot 状态和支持的平台
 - `/about` - 关于本 Bot
+- `/reload` - 重载动态脚本插件 (管理员)
 
 ### 支持的 URL 格式
 
@@ -86,7 +87,23 @@ go build -o MusicBot-Go
 
 ### 开发插件
 
-想要为新的音乐平台开发插件? 查看 `PLUGIN_GUIDE.md` 获取详细指南。
+想要为新的音乐平台开发插件? 可选两种方式：
+
+1) 静态插件（需要重新编译）
+- 参考 `plugins/netease` 的实现方式
+
+2) 动态脚本插件（无需重新编译）
+- 将插件源码放在 `plugins/scripts/<name>`
+- 在 `config.ini` 添加 `[plugins.<name>]` 配置
+- 可通过 `PluginScriptDir` 修改脚本目录（默认 `./plugins/scripts`）
+
+动态脚本插件最小入口：
+```go
+// package <name>
+func Init(cfg map[string]string) error
+func Meta() map[string]interface{}
+```
+可选实现：`Search/GetTrack/GetDownloadInfo/GetLyrics/GetPlaylist/MatchURL/MatchText`
 
 ### 架构
 
