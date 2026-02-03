@@ -9,6 +9,7 @@ import (
 	"os"
 	"os/exec"
 	"path/filepath"
+	"strings"
 	"time"
 
 	logpkg "github.com/liuran001/MusicBot-Go/bot/logger"
@@ -54,28 +55,9 @@ func (h *RecognizeHandler) Handle(ctx context.Context, b *telego.Bot, update *te
 		sendText(ctx, b, chatID, replyID, "语音过大，无法识别")
 		return
 	}
-	fileURL := b.FileDownloadURL(fileInfo.FilePath)
-
-	client := &http.Client{Timeout: 30 * time.Second}
-	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
+	audioData, err := downloadTelegramFile(ctx, b, fileInfo.FilePath)
 	if err != nil {
 		sendText(ctx, b, chatID, replyID, "下载语音失败，请稍后重试")
-		return
-	}
-	resp, err := client.Do(req)
-	if err != nil {
-		sendText(ctx, b, chatID, replyID, "下载语音失败，请稍后重试")
-		return
-	}
-	defer resp.Body.Close()
-	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
-		sendText(ctx, b, chatID, replyID, "下载语音失败，请稍后重试")
-		return
-	}
-
-	audioData, err := io.ReadAll(resp.Body)
-	if err != nil {
-		sendText(ctx, b, chatID, replyID, "读取语音失败，请稍后重试")
 		return
 	}
 
@@ -176,4 +158,34 @@ func convertToMP3(ctx context.Context, audioData []byte, cacheDir string) ([]byt
 	}
 
 	return mp3Data, nil
+}
+
+func downloadTelegramFile(ctx context.Context, b *telego.Bot, filePath string) ([]byte, error) {
+	filePath = strings.TrimSpace(filePath)
+	if filePath == "" {
+		return nil, fmt.Errorf("empty file path")
+	}
+	if filepath.IsAbs(filePath) {
+		if data, err := os.ReadFile(filePath); err == nil {
+			return data, nil
+		}
+	}
+	if b == nil {
+		return nil, fmt.Errorf("bot client is nil")
+	}
+	fileURL := b.FileDownloadURL(filePath)
+	client := &http.Client{Timeout: 30 * time.Second}
+	req, err := http.NewRequestWithContext(ctx, http.MethodGet, fileURL, nil)
+	if err != nil {
+		return nil, err
+	}
+	resp, err := client.Do(req)
+	if err != nil {
+		return nil, err
+	}
+	defer resp.Body.Close()
+	if resp.StatusCode < 200 || resp.StatusCode >= 300 {
+		return nil, fmt.Errorf("unexpected status: %s", resp.Status)
+	}
+	return io.ReadAll(resp.Body)
 }
