@@ -172,9 +172,9 @@ class AudioDownloader:
 
 def print_row(col1, col2, col3, col4=None):
     """格式化控制台列表输出，使用制表符对齐"""
-    row = f"{C_TITLE}{col1}{C_END}\t{C_ARTIST}{col2}{C_END}\t{C_ALBUM}{col3}{C_END}"
+    row = f"{C_TITLE}{col1}{C_END} | {C_ARTIST}{col2}{C_END} | {C_ALBUM}{col3}{C_END}"
     if col4:
-        row += f"\t{C_ID}{col4}{C_END}"
+        row += f" | {C_ID}{col4}{C_END}"
     print(row)
 
 def cli_main():
