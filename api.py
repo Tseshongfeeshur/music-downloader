@@ -20,10 +20,27 @@ class NeteaseAPI:
         url = f"{self.base_url}/album/{album_id}"
         return self.client.request("GET", url)
 
-    def get_playlist_detail(self, playlist_id: int):
+    def get_playlist_detail(self, playlist_id: int, n=1000):
+        """
+        获取歌单详情。
+        由于 v3 接口的 tracks 字段默认只返回前10首，
+        我们需要根据 trackIds 重新请求完整的歌曲详情。
+        """
         url = f"{self.base_url}/v3/playlist/detail"
-        params = {"id": playlist_id}
-        return self.client.request("GET", url, params=params)
+        params = {"id": playlist_id, "n": n} # n 为获取 trackIds 的数量
+        res = self.client.request("GET", url, params=params)
+        
+        playlist = res.get('playlist', {})
+        track_ids = [t.get('id') for t in playlist.get('trackIds', [])]
+        
+        # 如果 trackIds 数量超过了当前 tracks 的数量（通常是10），则重新拉取完整详情
+        if track_ids and len(track_ids) > len(playlist.get('tracks', [])):
+            # 网易云接口通常限制单次详情请求为 1000 首
+            full_details = self.get_song_detail(track_ids[:n])
+            if full_details and full_details.get('songs'):
+                playlist['tracks'] = full_details['songs']
+        
+        return res
 
     def get_lyric(self, music_id: int):
         url = f"{self.base_url}/song/lyric"
